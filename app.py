@@ -278,7 +278,7 @@ def interroga_gemini_ai(contesto, richiesta_utente):
     payload = {
         "contents": [{
             "parts": [{
-                "text": f"Sei l'Assistente Virtuale di IdroSmart Outdoor. Contesto attuale: {contesto}\nRispondi in italiano in modo chiaro, breve e diretto.\nRichiesta: {richiesta_utente}"
+                "text": f"Sei l'Assistente Virtuale di IdroSmart Outdoor. Contesto attuale: {contesto}\nRispondi in italiano in modo chiaro, breve e directo.\nRichiesta: {richiesta_utente}"
             }]
         }]
     }
@@ -439,11 +439,15 @@ def loop_ascolto_telegram():
             pass
         time_lib.sleep(1)
 
-# Avvio del Thread dedicato all'assistente se non già in esecuzione
-if "telegram_thread_attivo" not in st.session_state:
-    st.session_state.telegram_thread_attivo = True
+# Funzione cache globale per garantire la nascita di UN SOLO thread in tutta l'app
+@st.cache_resource
+def avvia_bot_singolo_globale():
     t = threading.Thread(target=loop_ascolto_telegram, daemon=True)
     t.start()
+    return True
+
+# Avvia l'ascolto in modo sicuro a livello di server
+avvia_bot_singolo_globale()
 
 # ====================================================================================================
 
