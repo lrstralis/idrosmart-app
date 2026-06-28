@@ -2,6 +2,10 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 from datetime import datetime, timedelta, time
+import threading
+import time as time_lib
+import requests
+import json
 
 st.set_page_config(page_title="IdroSmart PRO 365", layout="wide", page_icon="💧")
 
@@ -138,7 +142,7 @@ def cancella_prenotazione(id_prenotazione):
     conn.commit()
     conn.close()
 
-# --- FUNZIONI DI CANCELLAZIONE MASSIVA RICHIESTE ---
+# --- FUNZIONI DI CANCELLAZIONE MASSIVA ---
 def cancella_turni_settimana(data_rif):
     inizio_sett = data_rif - timedelta(days=data_rif.weekday())
     fine_sett = inizio_sett + timedelta(days=6)
@@ -406,7 +410,7 @@ with tab_dashboard:
         st.sidebar.success("Turni registrati correttamente!")
         st.rerun()
 
-    # --- NUOVA SEZIONE: SELEZIONE CANCELLAZIONE MASSIVA TURNI ---
+    # --- SEZIONE: SELEZIONE CANCELLAZIONE MASSIVA TURNI ---
     st.sidebar.markdown("---")
     st.sidebar.subheader("⚠️ Danger Zone — Rimozione Massiva")
     opzione_canc_massa = st.sidebar.selectbox("Scegli blocco da svuotare:", ["Nessuna azione", "Turni della Settimana", "Turni del Mese", "Tutti i turni in generale"])
@@ -464,10 +468,8 @@ with tab_dashboard:
                 "Modalità": r['config_scelta'], "Carico Richiesto (Motori M)": f"{r['motori_std']:.2f} M", "Portata (l/s)": f"{portata_s:.0f} l/s"
             })
         
-        # Rendering Tabella
         st.table(pd.DataFrame(righe_tabella))
         
-        # Sezione Elenco con Pulsante di Rimozione integrato sotto la tabella
         st.markdown("##### 🗑️ Rimozione Manuale Veloce Turni del Giorno:")
         for idx, r in df_giorno_attivi.iterrows():
             c_del1, c_del2 = st.columns([5, 1])
@@ -480,7 +482,7 @@ with tab_dashboard:
                     st.rerun()
 
 # =========================================================
-# TAB 2: AGENDA GIORNALIERA DELLE MANOVRE (SOLO DA ANAGRAFICA)
+# TAB 2: AGENDA GIORNALIERA DELLE MANOVRE
 # =========================================================
 with tab_agenda:
     st.title("📋 Agenda Giornaliera delle Manovre")
