@@ -95,19 +95,7 @@ def inserisci_irrigante_completo(nome, zona, prelievo, motori, distanza, extra_f
     cursor.execute('''
         INSERT INTO irriganti (nome, zona, tipo_prelievo, motori_std, minuti_distanza, extra_fosso_sporco, giorni_anticipo_manovra)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''', (nome, zona, prelievo, motori, Container, extra_fosso, giorni_ant)) # Nota: 'distanza' passata come parametro corretto
-    id_generato = cursor.lastrowid
-    conn.commit()
-    conn.close()
-    return id_generato
-
-def inserisci_irrigante_completo(nome, zona, prelievo, motori, distanza, extra_fosso, giorni_ant):
-    conn = sqlite3.connect('idrosmart.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        INSERT INTO irriganti (nome, zona, tipo_prelievo, motori_std, minutes_distanza, extra_fosso_sporco, giorni_anticipo_manovra)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    '''.replace("minutes_distanza", "minuti_distanza"), (nome, zona, prelievo, motori, distanza, extra_fosso, giorni_ant))
+    ''', (nome, zona, prelievo, motori, distanza, extra_fosso, giorni_ant))
     id_generato = cursor.lastrowid
     conn.commit()
     conn.close()
