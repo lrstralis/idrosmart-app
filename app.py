@@ -374,14 +374,13 @@ def elabora_comando_assistente(testo_messaggio):
     return interroga_gemini_ai(contesto_generale, testo_messaggio)
 
 # Servizio di ascolto Telegram in Background Loop
-def loop_ascolto_telegram():
-    token = st.secrets.get("TELEGRAM_TOKEN", "")
-    if not token: return
+def loop_ascolto_telegram(token_ascolto):
+    if not token_ascolto: return
     last_update_id = 0
     
     # Pulizia iniziale messaggi vecchi
     try:
-        r = requests.get(f"https://api.telegram.org/bot{token}/getUpdates?limit=1", timeout=5).json()
+        r = requests.get(f"https://api.telegram.org/bot{token_ascolto}/getUpdates?limit=1", timeout=5).json()
         if "result" in r and r["result"]:
             last_update_id = r["result"][0]["update_id"]
     except: pass
@@ -427,7 +426,7 @@ def loop_ascolto_telegram():
                 ultimo_controllo_giorno = f"S_{data_oggi}"
 
             # Ascolto messaggi in tempo reale (Long Polling)
-            url = f"https://api.telegram.org/bot{token}/getUpdates?offset={last_update_id + 1}&timeout=5"
+            url = f"https://api.telegram.org/bot{token_ascolto}/getUpdates?offset={last_update_id + 1}&timeout=5"
             res = requests.get(url, timeout=10).json()
             if "result" in res:
                 for update in res["result"]:
@@ -439,15 +438,17 @@ def loop_ascolto_telegram():
             pass
         time_lib.sleep(1)
 
-# Funzione cache globale per garantire la nascita di UN SOLO thread in tutta l'app
+# Funzione cache globale basata sul Token corrente per ricaricarsi istantaneamente se cambiano i Secrets
 @st.cache_resource
-def avvia_bot_singolo_globale():
-    t = threading.Thread(target=loop_ascolto_telegram, daemon=True)
+def avvia_bot_singolo_globale(token_corrente):
+    t = threading.Thread(target=loop_ascolto_telegram, args=(token_corrente,), daemon=True)
     t.start()
     return True
 
-# Avvia l'ascolto in modo sicuro a livello di server
-avvia_bot_singolo_globale()
+# Avvia l'ascolto passando il token: se il token cambia nei Secrets, la cache invalida il vecchio thread e ne lancia uno nuovo corretto!
+token_attuale_secrets = st.secrets.get("TELEGRAM_TOKEN", "")
+if token_attuale_secrets and token_attuale_secrets != "OFF":
+    avvia_bot_singolo_globale(token_attuale_secrets)
 
 # ====================================================================================================
 
