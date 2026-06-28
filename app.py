@@ -67,7 +67,7 @@ def calcola_giri_chiavone(motori_totali, nome_chiavone):
 
 # --- FUNZIONI DATABASE ---
 def inizializza_tabelle_personalizzate():
-    conn = sqlite3.connect('idrosmart.db')
+    conn = sqlite3.connect('idrosmart.db', timeout=10)
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS irriganti (
@@ -94,7 +94,7 @@ def inizializza_tabelle_personalizzate():
     conn.close()
 
 def inserisci_irrigante_completo(nome, zona, prelievo, motori, distanza, extra_fosso, giorni_ant):
-    conn = sqlite3.connect('idrosmart.db')
+    conn = sqlite3.connect('idrosmart.db', timeout=10)
     cursor = conn.cursor()
     cursor.execute('''
         INSERT INTO irriganti (nome, zona, tipo_prelievo, motori_std, minuti_distanza, extra_fosso_sporco, giorni_anticipo_manovra)
@@ -106,7 +106,7 @@ def inserisci_irrigante_completo(nome, zona, prelievo, motori, distanza, extra_f
     return id_generato
 
 def aggiorna_irrigante_completo(id_irr, nome, zona, prelievo, motori, distanza, extra_fosso, giorni_ant):
-    conn = sqlite3.connect('idrosmart.db')
+    conn = sqlite3.connect('idrosmart.db', timeout=10)
     cursor = conn.cursor()
     cursor.execute('''
         UPDATE irriganti SET nome=?, zona=?, tipo_prelievo=?, motori_std=?, minuti_distanza=?, extra_fosso_sporco=?, giorni_anticipo_manovra=? WHERE id=?
@@ -115,38 +115,38 @@ def aggiorna_irrigante_completo(id_irr, nome, zona, prelievo, motori, distanza, 
     conn.close()
 
 def inserisci_manovra_personalizzata(irr_id, desc, val, unita):
-    conn = sqlite3.connect('idrosmart.db')
+    conn = sqlite3.connect('idrosmart.db', timeout=10)
     cursor = conn.cursor()
     cursor.execute('INSERT INTO manovre_personalizzate (irrigante_id, descrizione, valore_anticipo, unita_anticipo) VALUES (?, ?, ?, ?)', (irr_id, desc, val, unita))
     conn.commit()
     conn.close()
 
 def cancella_manovra_personalizzata(manovra_id):
-    conn = sqlite3.connect('idrosmart.db')
+    conn = sqlite3.connect('idrosmart.db', timeout=10)
     cursor = conn.cursor()
     cursor.execute('DELETE FROM manovre_personalizzate WHERE id = ?', (manovra_id,))
     conn.commit()
     conn.close()
 
 def inserisci_prenotazione_avanzata(irrigante_id, inizio, fine, config):
-    conn = sqlite3.connect('idrosmart.db')
+    conn = sqlite3.connect('idrosmart.db', timeout=10)
     cursor = conn.cursor()
     cursor.execute('INSERT INTO prenotazioni (irrigante_id, data_ora_inizio, data_ora_fine, config_scelta) VALUES (?, ?, ?, ?)', (irrigante_id, inizio, fine, config))
     conn.commit()
     conn.close()
 
 def cancella_prenotazione(id_prenotazione):
-    conn = sqlite3.connect('idrosmart.db')
+    conn = sqlite3.connect('idrosmart.db', timeout=10)
     cursor = conn.cursor()
     cursor.execute("DELETE FROM prenotazioni WHERE id = ?", (id_prenotazione,))
     conn.commit()
     conn.close()
 
-# --- FUNZIONI DI CANCELLAZIONE MASSIVA ---
+# --- FUNZIONI DI CANCELLAZIONE MASSIVA RICHIESTE ---
 def cancella_turni_settimana(data_rif):
     inizio_sett = data_rif - timedelta(days=data_rif.weekday())
     fine_sett = inizio_sett + timedelta(days=6)
-    conn = sqlite3.connect('idrosmart.db')
+    conn = sqlite3.connect('idrosmart.db', timeout=10)
     cursor = conn.cursor()
     cursor.execute('''
         DELETE FROM prenotazioni 
@@ -158,14 +158,14 @@ def cancella_turni_settimana(data_rif):
 
 def cancella_turni_mese(data_rif):
     anno_mese = data_rif.strftime("%Y-%m")
-    conn = sqlite3.connect('idrosmart.db')
+    conn = sqlite3.connect('idrosmart.db', timeout=10)
     cursor = conn.cursor()
     cursor.execute("DELETE FROM prenotazioni WHERE substr(data_ora_inizio, 1, 7) = ?", (anno_mese,))
     conn.commit()
     conn.close()
 
 def cancella_turni_generale():
-    conn = sqlite3.connect('idrosmart.db')
+    conn = sqlite3.connect('idrosmart.db', timeout=10)
     cursor = conn.cursor()
     cursor.execute("DELETE FROM prenotazioni")
     conn.commit()
@@ -222,7 +222,7 @@ def ottieni_giorno_settimana(data_obj):
 inizializza_tabelle_personalizzate()
 
 # --- CARICAMENTO DATI ---
-conn = sqlite3.connect('idrosmart.db')
+conn = sqlite3.connect('idrosmart.db', timeout=10)
 df_irriganti = pd.read_sql_query("SELECT * FROM irriganti ORDER BY nome", conn)
 df_tutti_attivi = pd.read_sql_query('''
     SELECT p.id, i.id AS irr_id, i.nome, i.motori_std, i.zona, i.minuti_distanza, i.extra_fosso_sporco, i.giorni_anticipo_manovra,
@@ -265,14 +265,13 @@ esito_colore_g, _ = ottieni_colore_stato_semplice(motori_giorno_global, rangoni_
 _, portata_globale_g_ls = calcola_giri_chiavone(motori_giorno_global, "Generico")
 
 # ====================================================================================================
-# 🤖 INTEGRAZIONE CORE: ASSISTENTE BOT TELEGRAM CON GEMINI AI
+# 🤖 INTEGRAZIONE CORE: ASSISTENTE BOT TELEGRAM CON GEMINI AI — OTTIMIZZATO PER CHIAVI DI NUOVO TIPO
 # ====================================================================================================
 
-def interroga_gemini_ai(contesto, richiesta_utente):
+def interroga_gemini_ai(contesto, richiesta_utente, api_key):
     url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent"
-    api_key = st.secrets.get("GEMINI_API_KEY", "")
     if not api_key:
-        return "Al momento la chiave IA non è configurata nei Secrets."
+        return "Al momento la chiave IA non è configurata nei Secrets di Streamlit."
         
     headers = {'Content-Type': 'application/json'}
     payload = {
@@ -288,32 +287,35 @@ def interroga_gemini_ai(contesto, richiesta_utente):
         if 'candidates' in res_json and res_json['candidates']:
             return res_json['candidates'][0]['content']['parts'][0]['text']
         else:
-            return "Elaborazione dati completata. Centralina IA attiva."
+            return "Elaborazione dati idraulici completata. IA in standby."
     except Exception:
-        return "Connessione ai modelli IA temporaneamente instabile."
+        return "Al momento non riesco a connettermi ai server IA centrali."
 
-def invia_messaggio_telegram(testo):
-    token = st.secrets.get("TELEGRAM_TOKEN", "")
-    chat_id = st.secrets.get("TELEGRAM_CHAT_ID", "")
+def invia_messaggio_telegram(testo, token, chat_id):
+    if not token or not chat_id: return
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     try:
         requests.post(url, json={"chat_id": chat_id, "text": testo, "parse_mode": "Markdown"}, timeout=5)
     except Exception:
         pass
 
-def elabora_comando_assistente(testo_messaggio):
+def elabora_comando_assistente(testo_messaggio, api_key, token, chat_id):
     testo_lower = testo_messaggio.lower()
     
+    # Diagnostica Pressione
     if "pressione" in testo_lower or "calo" in testo_lower:
-        conn = sqlite3.connect('idrosmart.db')
+        conn = sqlite3.connect('idrosmart.db', timeout=10)
         df_p = pd.read_sql_query("SELECT p.data_ora_inizio, i.nome, i.motori_std FROM prenotazioni p JOIN irriganti i ON p.irrigante_id = i.id WHERE p.stato = 'PROGRAMMATO'", conn)
         conn.close()
         contesto_pressione = f"Utenze registrate con turni attivi: {df_p.to_dict(orient='records')}"
-        risposta_ia = interroga_gemini_ai(contesto_pressione, testo_messaggio)
+        risposta_ia = interroga_gemini_ai(contesto_pressione, testo_messaggio, api_key)
+        if "server ia" in risposta_ia.lower() or "non è configurata" in risposta_ia.lower():
+            return "⚠️ *DIAGNOSTICA DI EMERGENZA*:\nHo rilevato la segnalazione sul calo di pressione. Verifica se ci sono troppi chiavoni aperti contemporaneamente in centrale o se la pompa P3 Inverter ha i giri troppo bassi."
         return f"⚠️ *DIAGNOSTICA PRESSIONE RETE*\n\n{risposta_ia}"
 
+    # Inserimento turni sicuro (Anti-Doppione)
     if "aggiungi" in testo_lower or "inserisci" in testo_lower or "turno" in testo_lower:
-        conn = sqlite3.connect('idrosmart.db')
+        conn = sqlite3.connect('idrosmart.db', timeout=10)
         df_irr_tutti = pd.read_sql_query("SELECT * FROM irriganti", conn)
         conn.close()
         
@@ -338,71 +340,115 @@ def elabora_comando_assistente(testo_messaggio):
             inizio_str = f"{data_domani} 08:00"
             fine_str = f"{data_domani} 12:00"
             
-            conn = sqlite3.connect('idrosmart.db')
+            # CONTROLLO ANTI-DOPPIONE STRITTISSIMO
+            conn = sqlite3.connect('idrosmart.db', timeout=10)
             check_doppio = pd.read_sql_query("SELECT id FROM prenotazioni WHERE irrigante_id = ? AND data_ora_inizio = ?", conn, params=[id_u, inizio_str])
             
             if not check_doppio.empty:
                 conn.close()
-                return f"⚠️ *ATTENZIONE*: Il turno per *{nome_rilevato}* è già presente."
+                return f"⚠️ *ATTENZIONE*: Il turno per *{nome_rilevato}* (ore 08:00) è già presente in agenda. Non è stato duplicato."
                 
             df_prenotati = pd.read_sql_query("SELECT motori_std FROM prenotazioni WHERE stato = 'PROGRAMMATO'", conn)
             conn.close()
             
             carico_futuro_stimato = df_prenotati['motori_std'].sum() + motori_t + 0.5
             if carico_futuro_stimato > 12.0:
-                return f"❌ *SOVRACCARICO*: Spazio idraulico insufficiente per {nome_rilevato}."
+                return f"❌ *SPAZIO INSUFFICIENTE*: Non c'è disponibilità idraulica per *{nome_rilevato}*. Le pompe andrebbero in sovraccarico ({carico_futuro_stimato:.1f} M)."
                 
             if id_u is None:
                 id_u = inserisci_irrigante_completo(nome_rilevato, zona_t, "Fosso", motori_t, 30, 15, 0)
                 
             inserisci_prenotazione_avanzata(id_u, inizio_str, fine_str, "Fosso")
             assetto_pompe_nuovo, _ = seleziona_pompe_centrale(carico_futuro_stimato)
-            return f"✅ *TURNO INSERITO CORRETTAMENTE (Domani 08:00-12:00)*\n\n• Utenza: {nome_rilevato}\n• Impatto Pompe: {carico_futuro_stimato:.2f} M.\n• Stato: *{assetto_pompe_nuovo}*."
+            return f"✅ *TURNO INSERITO CORRETTAMENTE (Domani 08:00-12:00)*\n\n• Utenza: {nome_rilevato}\n• Impatto Pompe: Carico totale a {carico_futuro_stimato:.2f} M.\n• Stato Pompe: Attivare *{assetto_pompe_nuovo}*."
         else:
-            return "Specificare un nome valido (es: 'Aggiungi Piave 1')."
+            return "Specificare un nome valido per l'inserimento (es: 'Aggiungi Piave 1')."
 
-    # Turni odierni o generici
-    conn = sqlite3.connect('idrosmart.db')
-    df_info = pd.read_sql_query("SELECT p.data_ora_inizio, p.data_ora_fine, i.nome FROM prenotazioni p JOIN irriganti i ON p.irrigante_id = i.id WHERE p.stato = 'PROGRAMMATO'", conn)
+    # Risposte generali
+    conn = sqlite3.connect('idrosmart.db', timeout=10)
+    df_info = pd.read_sql_query("SELECT * FROM irriganti", conn)
     conn.close()
-    contesto_generale = f"Turni attualmente salvati a sistema: {df_info.to_dict(orient='records')}"
-    return interroga_gemini_ai(contesto_generale, testo_messaggio)
+    contesto_generale = f"Anagrafica utenze nell'applicazione: {df_info['nome'].tolist()}"
+    return interroga_gemini_ai(contesto_generale, testo_messaggio, api_key)
 
-def loop_ascolto_telegram():
-    token_ascolto = st.secrets.get("TELEGRAM_TOKEN", "")
-    if not token_ascolto or token_ascolto == "OFF": return
-    
+# Servizio di ascolto Telegram in Background Loop
+def loop_ascolto_telegram(token, chat_id, api_key):
+    if not token: return
     last_update_id = 0
-    # Sincronizzazione iniziale veloce degli update
+    
+    # Pulizia iniziale messaggi vecchi
     try:
-        r = requests.get(f"https://api.telegram.org/bot{token_ascolto}/getUpdates?limit=1&timeout=1", timeout=3).json()
+        r = requests.get(f"https://api.telegram.org/bot{token}/getUpdates?limit=1", timeout=5).json()
         if "result" in r and r["result"]:
             last_update_id = r["result"][0]["update_id"]
     except: pass
 
+    ultimo_controllo_giorno = None
     while True:
         try:
-            # Controllo dinamico del Token per forzare l'arresto se disattivato
-            token_realtime = st.secrets.get("TELEGRAM_TOKEN", "")
-            if not token_realtime or token_realtime == "OFF":
-                break
+            ora_attuale = datetime.now().time()
+            data_oggi = datetime.now().date()
+            
+            # Invio promemoria Mattina (05:45)
+            if ora_attuale.hour == 5 and ora_attuale.minute == 45 and ultimo_controllo_giorno != f"M_{data_oggi}":
+                conn = sqlite3.connect('idrosmart.db', timeout=10)
+                df_m = pd.read_sql_query("SELECT p.data_ora_inizio, i.nome FROM prenotazioni p JOIN irriganti i ON p.irrigante_id = i.id WHERE p.stato = 'PROGRAMMATO'", conn)
+                conn.close()
+                manovre = []
+                if not df_m.empty:
+                    df_m['dt'] = pd.to_datetime(df_m['data_ora_inizio'])
+                    for _, r in df_m[df_m['dt'].dt.date == data_oggi].iterrows():
+                        manovre.append(f"• Ore {r['dt'].strftime('%H:%M')} -> {r['nome']}")
+                msg = "☀️ *PROMEMORIA MATTUTINO (05:45)*:\n" + ("\n".join(manovre) if manovre else "Nessuna manovra oggi.")
+                invia_messaggio_telegram(msg, token, chat_id)
+                ultimo_controllo_giorno = f"M_{data_oggi}"
                 
-            url = f"https://api.telegram.org/bot{token_realtime}/getUpdates?offset={last_update_id + 1}&timeout=3"
-            res = requests.get(url, timeout=5).json()
+            # Invio promemoria Sera (21:30)
+            if ora_attuale.hour == 21 and ora_attuale.minute == 30 and ultimo_controllo_giorno != f"S_{data_oggi}":
+                data_domani = data_oggi + timedelta(days=1)
+                conn = sqlite3.connect('idrosmart.db', timeout=10)
+                df_m = pd.read_sql_query("SELECT p.data_ora_inizio, i.nome FROM prenotazioni p JOIN irriganti i ON p.irrigante_id = i.id WHERE p.stato = 'PROGRAMMATO'", conn)
+                conn.close()
+                manovre = []
+                primo_orario = None
+                if not df_m.empty:
+                    df_m['dt'] = pd.to_datetime(df_m['data_ora_inizio'])
+                    for _, r in df_m[df_m['dt'].dt.date == data_domani].iterrows():
+                        manovre.append(f"• Ore {r['dt'].strftime('%H:%M')}: {r['nome']}")
+                        if primo_orario is None or r['dt'].time() < primo_orario: primo_orario = r['dt'].time()
+                msg = "🌙 *RESOCONTO SERALE*:\n" + ("\n".join(manovre) if manovre else "Nessuna manovra domani.")
+                if primo_orario and primo_orario < time(8, 30):
+                    dt_sveglia = datetime.combine(data_domani, primo_orario) - timedelta(minutes=45)
+                    msg += f"\n\n⚠️ *STRAORDINARIO*: Prima manovra alle {primo_orario.strftime('%H:%M')}. Sveglia impostata 45 min prima: *{dt_sveglia.strftime('%H:%M')}*."
+                invia_messaggio_telegram(msg, token, chat_id)
+                ultimo_controllo_giorno = f"S_{data_oggi}"
+
+            # Ascolto messaggi in tempo reale (Long Polling)
+            url = f"https://api.telegram.org/bot{token}/getUpdates?offset={last_update_id + 1}&timeout=5"
+            res = requests.get(url, timeout=10).json()
             if "result" in res:
                 for update in res["result"]:
                     last_update_id = update["update_id"]
                     if "message" in update and "text" in update["message"]:
-                        risposta_elaborata = elabora_comando_assistente(update["message"]["text"])
-                        invia_messaggio_telegram(risposta_elaborata)
+                        risposta_elaborata = elabora_comando_assistente(update["message"]["text"], api_key, token, chat_id)
+                        invia_messaggio_telegram(risposta_elaborata, token, chat_id)
         except Exception:
-            time_lib.sleep(2)
-        time_lib.sleep(0.5)
+            pass
+        time_lib.sleep(1)
 
-# --- AVVIO DEL THREAD CON VARIABILE GLOBALE REALE (NO CACHE BLOCCHETTI) ---
-if not hasattr(st, "_bot_telegram_attivo_globale") or not st._bot_telegram_attivo_globale.is_alive():
-    st._bot_telegram_attivo_globale = threading.Thread(target=loop_ascolto_telegram, daemon=True)
-    st._bot_telegram_attivo_globale.start()
+# Avvio del Thread dedicato all'assistente se non già in esecuzione
+if "telegram_thread_attivo" not in st.session_state:
+    st.session_state.telegram_thread_attivo = True
+    t_token = st.secrets.get("TELEGRAM_TOKEN", "")
+    t_chat_id = st.secrets.get("TELEGRAM_CHAT_ID", "")
+    g_api_key = st.secrets.get("GEMINI_API_KEY", "")
+    
+    t = threading.Thread(
+        target=loop_ascolto_telegram, 
+        args=(t_token, t_chat_id, g_api_key), 
+        daemon=True
+    )
+    t.start()
 
 # ====================================================================================================
 
@@ -445,7 +491,7 @@ with tab_home:
         colore_loop, _ = ottieni_colore_stato_semplice(motori_loop, rangoni_loop)
         
         with col_sett[i]:
-            if st.button(f"{nome_giorno_it} {giorno_loop.strftime('%d/%m')}", key=f"btn_giorno_{giorno_loop.strftime('%Y%m%d')}", use_container_width=True):
+            if st.button(f"{nome_giorno_it} {giorno_loop.strftime('%d/%m')} ({motori_loop:.1f} M)", key=f"btn_giorno_{giorno_loop.strftime('%Y%m%d')}", use_container_width=True):
                 st.session_state.data_corrente = giorno_loop
                 st.rerun()
             
@@ -553,6 +599,7 @@ with tab_dashboard:
         st.sidebar.success("Turni registrati correttamente!")
         st.rerun()
 
+    # --- SEZIONE: SELEZIONE CANCELLAZIONE MASSIVA TURNI ---
     st.sidebar.markdown("---")
     st.sidebar.subheader("⚠️ Danger Zone — Rimozione Massiva")
     opzione_canc_massa = st.sidebar.selectbox("Scegli blocco da svuotare:", ["Nessuna azione", "Turni della Settimana", "Turni del Mese", "Tutti i turni in generale"])
@@ -563,11 +610,16 @@ with tab_dashboard:
             if codice_verifica == testo_conferma:
                 if opzione_canc_massa == "Turni della Settimana":
                     cancella_turni_settimana(st.session_state.data_corrente)
+                    st.sidebar.success("Turni settimanali cancellati correttamente!")
                 elif opzione_canc_massa == "Turni del Mese":
                     cancella_turni_mese(st.session_state.data_corrente)
+                    st.sidebar.success("Turni del mese corrente cancellati!")
                 elif opzione_canc_massa == "Tutti i turni in generale":
                     cancella_turni_generale()
+                    st.sidebar.success("Intero storico turni azzerato!")
                 st.rerun()
+            else:
+                st.sidebar.error("Testo di conferma non corretto.")
 
     c_nav1, c_nav2, c_nav3 = st.columns([1, 2, 1])
     with c_nav1: st.button("⬅️ Giorno Precedente", on_click=giorno_precedente, use_container_width=True, key="dash_prev")
@@ -605,8 +657,10 @@ with tab_dashboard:
                 "Modalità": r['config_scelta'], "Carico Richiesto (Motori M)": f"{r['motori_std']:.2f} M", "Portata (l/s)": f"{portata_s:.0f} l/s"
             })
         
+        # Rendering Tabella
         st.table(pd.DataFrame(righe_tabella))
         
+        # Sezione Elenco con Pulsante di Rimozione integrato sotto la tabella
         st.markdown("##### 🗑️ Rimozione Manuale Veloce Turni del Giorno:")
         for idx, r in df_giorno_attivi.iterrows():
             c_del1, c_del2 = st.columns([5, 1])
@@ -635,7 +689,7 @@ with tab_agenda:
         st.info("Nessuna manovra presente nel sistema.")
     else:
         manovre_totali = []
-        conn = sqlite3.connect('idrosmart.db')
+        conn = sqlite3.connect('idrosmart.db', timeout=10)
         df_manovre_p = pd.read_sql_query("SELECT * FROM manovre_personalizzate", conn)
         conn.close()
 
@@ -646,8 +700,10 @@ with tab_agenda:
             if fi_dt.weekday() in [5, 6] and row['config_scelta'] == "Fosso":
                 lun_mattina = datetime.combine(fi_dt.date() + timedelta(days=(7 - fi_dt.weekday())), time(8, 0))
                 manovre_totali.append({
-                    "Data/Ora": fi_dt, "Tipo": "🌊 Invaso Rangona", "ForzaOraria": "INFO",
-                    "Descrizione": f"Fine turno weekend di {row['nome']}. Lasciare correre l'acqua fino a Lunedì {lun_mattina.strftime('%d/%m')} ore 08:00."
+                    "Data/Ora": fi_dt,
+                    "Tipo": "🌊 Invaso Rangona",
+                    "ForzaOraria": "INFO",
+                    "Descrizione": f"Fine turno weekend di {row['nome']}. Lasciare correre l'acqua fino a Lunedì {lun_mattina.strftime('%d/%m')} ore 08:00 per rimpinguare l'invaso Rangona."
                 })
 
             sub_m = df_manovre_p[df_manovre_p['irrigante_id'] == int(row['irr_id'])]
@@ -663,8 +719,10 @@ with tab_agenda:
                 ora_manovra_ott = ottimizza_orario_manovra(ora_manovra_dinamica, motori_correnti=motori_giorno_global)
                 
                 manovre_totali.append({
-                    "Data/Ora": ora_manovra_ott, "Tipo": "🔧 Manovra Config.", "ForzaOraria": "CONTROLLA",
-                    "Descrizione": f"[{row['nome']}] {m_row['descrizione']} ({val} {unita} prima)."
+                    "Data/Ora": ora_manovra_ott,
+                    "Tipo": "🔧 Manovra Configurata",
+                    "ForzaOraria": "CONTROLLA",
+                    "Descrizione": f"[{row['nome']}] {m_row['descrizione']} (Anticipo impostato: {val} {unita})."
                 })
 
         if manovre_totali:
@@ -672,10 +730,11 @@ with tab_agenda:
             df_giorno = df_manovre[df_manovre['Data/Ora'].dt.date == st.session_state.data_corrente]
             
             if df_giorno.empty:
-                st.info("Nessuna manovra fisica pianificata per oggi.")
+                st.info("Nessuna manovra fisica pianificata o configurata in anagrafica per oggi.")
             else:
                 for _, m in df_giorno.iterrows():
                     ora_f = "24:00" if m['Data/Ora'].strftime('%H:%M') in ["23:59", "00:00"] and m['ForzaOraria'] == "INFO" else m['Data/Ora'].strftime("%H:%M")
+                    
                     if m['ForzaOraria'] == "INFO":
                         st.success(f"🌊 **ORE {ora_f}** — [{m['Tipo']}] {m['Descrizione']}")
                     else:
@@ -754,7 +813,14 @@ with tab_anagrafica:
         n_prelievo = st.selectbox("Prelievo Standard", ["Fosso", "Diretta"], key="ins_prelievo")
         
         is_diretta_ins = (n_prelievo == "Diretta")
-        n_zona = st.selectbox("Nodo Idraulico Associato", ELENCO_CHIAVONI_REALI, index=0, disabled=is_diretta_ins, key="ins_zona")
+        n_zona = st.selectbox(
+            "Nodo Idraulico Associato", 
+            ELENCO_CHIAVONI_REALI, 
+            index=0, 
+            disabled=is_diretta_ins,
+            help="Disabilitato se la modalità di prelievo è 'Diretta'",
+            key="ins_zona"
+        )
         
         n_motori = st.number_input("Motori assorbiti (M)", min_value=0.0, max_value=12.0, value=1.0, step=0.1, key="ins_motori")
         n_distanza = st.number_input("Minuti di distanza per apertura:", min_value=0, max_value=180, value=30, key="ins_distanza")
@@ -762,37 +828,50 @@ with tab_anagrafica:
         n_giorni_ant = st.selectbox("Giorni pre-anticipo manovre:", [0, 1, 2], key="ins_giorni_ant")
         
         st.markdown("---")
-        st.subheader("⚙️ Aggiungi Manovre Personalizzate")
+        st.subheader("⚙️ Aggiungi Manovre Personalizzate all'elenco temporaneo")
         
         c_ins_m1, c_ins_m2, c_ins_m3 = st.columns([3, 1, 1])
-        with c_ins_m1: desc_manovra_ins = st.text_input("Cosa fare? (Descrizione)", placeholder="Pulizia filtri...", key="tmp_desc")
+        with c_ins_m1: desc_manovra_ins = st.text_input("Cosa fare? (Descrizione)", placeholder="Es. Pulizia filtri secondari, Controllo livello", key="tmp_desc")
         with c_ins_m2: val_manovra_ins = st.number_input("Tempo prima", min_value=0.5, max_value=60.0, value=2.0, step=0.5, key="tmp_val")
         with c_ins_m3: unita_manovra_ins = st.selectbox("Unità", ["Ore", "Mezze Giornate", "Giorni"], key="tmp_unit")
         
         if st.button("➕ Inserisci Manovra nella Lista"):
             if desc_manovra_ins:
-                st.session_state.manovre_temporanee_registrazione.append({"descrizione": desc_manovra_ins, "valore": val_manovra_ins, "unita": unita_manovra_ins})
+                st.session_state.manovre_temporanee_registrazione.append({
+                    "descrizione": desc_manovra_ins,
+                    "valore": val_manovra_ins,
+                    "unita": unita_manovra_ins
+                })
+                st.success(f"Manovra '{desc_manovra_ins}' aggiunta alla lista provvisoria!")
                 st.rerun()
 
         if st.session_state.manovre_temporanee_registrazione:
+            st.markdown("##### 📝 Lista delle Manovre pronte al salvataggio:")
             for idx_tmp, m_tmp in enumerate(st.session_state.manovre_temporanee_registrazione):
                 col_m_v, col_m_d = st.columns([5, 1])
-                with col_m_v: st.write(f"🔧 **{m_tmp['descrizione']}** -> {m_tmp['valore']} {m_tmp['unita']} prima.")
+                with col_m_v:
+                    st.write(f"🔧 **{m_tmp['descrizione']}** da farsi **{m_tmp['valore']} {m_tmp['unita']}** prima del turno.")
                 with col_m_d:
                     if st.button("🗑️ Rimuovi", key=f"del_tmp_m_{idx_tmp}", use_container_width=True):
                         st.session_state.manovre_temporanee_registrazione.pop(idx_tmp)
                         st.rerun()
+        else:
+            st.caption("Nessuna manovra inserita nella lista provvisoria.")
 
         st.markdown("---")
-        if st.button("💾 Salva Profilo Completo", type="primary"):
+        if st.button("💾 Salva Profilo Completo (Utenza + Tutte le Manovre)", type="primary"):
             if n_nome:
                 zona_da_salvare = "Valvola Contrappesi" if is_diretta_ins else n_zona
                 nuovo_id = inserisci_irrigante_completo(n_nome, zona_da_salvare, n_prelievo, n_motori, n_distanza, n_extra_fosso, n_giorni_ant)
+                
                 for m_salvare in st.session_state.manovre_temporanee_registrazione:
                     inserisci_manovra_personalizzata(nuovo_id, m_salvare['descrizione'], m_salvare['valore'], m_salvare['unita'])
+                
                 st.session_state.manovre_temporanee_registrazione = []
-                st.success("Profilo salvato!")
+                st.success("Profilo e intero blocco manovre salvati nel Database!")
                 st.rerun()
+            else:
+                st.error("Inserisci il Nome / Identificativo Utenza prima di salvare.")
 
     with sub_mod:
         if df_irriganti.empty: st.info("Database vuoto.")
@@ -804,9 +883,17 @@ with tab_anagrafica:
             with st.form("form_mod_irr"):
                 m_nome = st.text_input("Identificativo", value=str(dati_c['nome']))
                 m_prelievo = st.selectbox("Prelievo", ["Fosso", "Diretta"], index=0 if dati_c['tipo_prelievo'] == "Fosso" else 1)
+                
                 is_diretta_mod = (m_prelievo == "Diretta")
                 idx_z = ELENCO_CHIAVONI_REALI.index(dati_c['zona']) if dati_c['zona'] in ELENCO_CHIAVONI_REALI else 0
-                m_zona = st.selectbox("Chiavone Reale Associato", ELENCO_CHIAVONI_REALI, index=0 if is_diretta_mod else idx_z, disabled=is_diretta_mod)
+                m_zona = st.selectbox(
+                    "Chiavone Reale Associato", 
+                    ELENCO_CHIAVONI_REALI, 
+                    index=0 if is_diretta_mod else idx_z, 
+                    disabled=is_diretta_mod,
+                    help="Disabilitato se la modalità di prelievo è 'Diretta'"
+                )
+                
                 m_motori = st.number_input("Motori (M)", min_value=0.0, max_value=12.0, value=float(dati_c['motori_std']))
                 m_distanza = st.number_input("Minuti di distanza:", min_value=0, max_value=180, value=int(dati_c['minuti_distanza']))
                 m_extra_fosso = st.number_input("Minuti Extra Fosso:", min_value=0, max_value=180, value=int(dati_c['extra_fosso_sporco']))
@@ -814,32 +901,39 @@ with tab_anagrafica:
                 if st.form_submit_button("Aggiorna Scheda"):
                     zona_da_salvare_mod = "Valvola Contrappesi" if is_diretta_mod else m_zona
                     aggiorna_irrigante_completo(id_selezionato, m_nome, zona_da_salvare_mod, m_prelievo, m_motori, m_distanza, m_extra_fosso, m_giorni_ant)
+                    st.success("Scheda aggiornata!")
                     st.rerun()
 
             st.markdown("---")
-            st.subheader(f"⚙️ Configurazione Manovre per {dati_c['nome']}")
+            st.subheader(f"⚙️ Configurazione Manovre Personalizzate per {dati_c['nome']}")
+            
             with st.form("form_aggiungi_manovra_personalizzata"):
                 c_m1, c_m2, c_m3 = st.columns([3, 1, 1])
-                with c_m1: desc_manovra = st.text_input("Cosa fare?")
+                with c_m1: desc_manovra = st.text_input("Cosa fare? (Descrizione Manovra)", placeholder="Es. Pulizia filtri secondari, Ispezione bocchetta")
                 with c_m2: val_manovra = st.number_input("Tempo prima", min_value=0.5, max_value=60.0, value=2.0, step=0.5)
                 with c_m3: unita_manovra = st.selectbox("Unità", ["Ore", "Mezze Giornate", "Giorni"])
-                if st.form_submit_button("➕ Aggiungi Manovra"):
+                if st.form_submit_button("➕ Aggiungi Manovra a questo Profilo"):
                     if desc_manovra:
                         inserisci_manovra_personalizzata(id_selezionato, desc_manovra, val_manovra, unita_manovra)
+                        st.success("Manovra aggiunta!")
                         st.rerun()
 
-            conn = sqlite3.connect('idrosmart.db')
+            conn = sqlite3.connect('idrosmart.db', timeout=10)
             df_m_salvate = pd.read_sql_query("SELECT * FROM manovre_personalizzate WHERE irrigante_id = ?", conn, params=[id_selezionato])
             conn.close()
 
             if not df_m_salvate.empty:
+                st.caption("Manovre registrate attive per questo profilo:")
                 for _, m_salv in df_m_salvate.iterrows():
                     c_v1, c_v2 = st.columns([5, 1])
-                    with c_v1: st.write(f"🔧 **{m_salv['descrizione']}** -> {m_salv['valore_anticipo']} {m_salv['unita_anticipo']} prima.")
+                    with c_v1: st.write(f"🔧 **{m_salv['descrizione']}** da farsi **{m_salv['valore_anticipo']} {m_salv['unita_anticipo']}** prima del turno.")
                     with c_v2: 
                         if st.button("🗑️ Rimuovi", key=f"del_man_{m_salv['id']}", use_container_width=True):
                             cancella_manovra_personalizzata(int(m_salv['id']))
                             st.rerun()
+            else:
+                st.info("Nessuna manovra opzionale registrata per questa utenza.")
 
     with sub_vis:
         if not df_irriganti.empty: st.dataframe(df_irriganti, use_container_width=True, hide_index=True)
+        else: st.info("Nessun record memorizzato.")
