@@ -436,19 +436,23 @@ def loop_ascolto_telegram(token, chat_id, api_key):
             pass
         time_lib.sleep(1)
 
-# Avvio del Thread dedicato all'assistente se non già in esecuzione
-if "telegram_thread_attivo" not in st.session_state:
-    st.session_state.telegram_thread_attivo = True
-    t_token = st.secrets.get("TELEGRAM_TOKEN", "")
-    t_chat_id = st.secrets.get("TELEGRAM_CHAT_ID", "")
-    g_api_key = st.secrets.get("GEMINI_API_KEY", "")
-    
+# RISOLUZIONE CRITICA DEI THREAD CONCORRENTI DUPLICATI (UNICO PER IL SERVER)
+@st.cache_resource
+def avvia_assistente_singolo_server(token, chat_id, api_key):
     t = threading.Thread(
         target=loop_ascolto_telegram, 
-        args=(t_token, t_chat_id, g_api_key), 
+        args=(token, chat_id, api_key), 
         daemon=True
     )
     t.start()
+    return True
+
+t_token = st.secrets.get("TELEGRAM_TOKEN", "")
+t_chat_id = st.secrets.get("TELEGRAM_CHAT_ID", "")
+g_api_key = st.secrets.get("GEMINI_API_KEY", "")
+
+if t_token and t_chat_id:
+    avvia_assistente_singolo_server(t_token, t_chat_id, g_api_key)
 
 # ====================================================================================================
 
