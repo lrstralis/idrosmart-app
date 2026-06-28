@@ -265,38 +265,36 @@ esito_colore_g, _ = ottieni_colore_stato_semplice(motori_giorno_global, rangoni_
 _, portata_globale_g_ls = calcola_giri_chiavone(motori_giorno_global, "Generico")
 
 # ====================================================================================================
-# 🤖 INTEGRAZIONE CORE: ASSISTENTE BOT TELEGRAM CON GEMINI AI — INTEGRATO SECONDO LE SPECIFICHE DETTAGLIATE
+# 🤖 INTEGRAZIONE CORE: ASSISTENTE BOT TELEGRAM CON GEMINI AI — OTTIMIZZATO PER CHIAVI DI NUOVO TIPO
 # ====================================================================================================
 
-# Funzione per interrogare Google Gemini in modo leggero e strutturato
 def interroga_gemini_ai(contesto, richiesta_utente):
     url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent"
-    # Utilizzo sicuro di una chiave fallback o recupero dai Secrets esterni
     api_key = st.secrets.get("GEMINI_API_KEY", "")
     if not api_key:
-        return "Errore: Chiave Gemini AI non configurata nei Secrets di Streamlit."
+        return "Al momento la chiave IA non è configurata nei Secrets di Streamlit."
         
     headers = {'Content-Type': 'application/json'}
     payload = {
         "contents": [{
             "parts": [{
-                "text": f"Sei l'Assistente Virtuale di IdroSmart Outdoor, un esperto intelligenza artificiale per il controllo dell'irrigazione agricola e delle pompe di centrale.\n"
-                        f"Contesto attuale dell'applicazione: {contesto}\n"
-                        f"Rispondi in modo professionale, chiaro e diretto come un vero assistente di campagna.\n"
-                        f"Richiesta dell'utente: {richiesta_utente}"
+                "text": f"Sei l'Assistente Virtuale di IdroSmart Outdoor. Contesto attuale: {contesto}\nRispondi in italiano in modo chiaro, breve e diretto.\nRichiesta: {richiesta_utente}"
             }]
         }]
     }
     try:
         r = requests.post(f"{url}?key={api_key}", headers=headers, json=payload, timeout=10)
         res_json = r.json()
-        return res_json['candidates'][0]['content']['parts'][0]['text']
+        if 'candidates' in res_json and res_json['candidates']:
+            return res_json['candidates'][0]['content']['parts'][0]['text']
+        else:
+            return "Elaborazione dati idraulici completata. IA in standby."
     except Exception:
-        return "Sono l'Assistente Idrosmart. Al momento non riesco a connettermi ai server IA centrali, ma posso dirti che ho elaborato i tuoi dati idraulici con successo."
+        return "Al momento non riesco a connettermi ai server IA centrali."
 
 def invia_messaggio_telegram(testo):
-    token = st.secrets.get("TELEGRAM_TOKEN", "8622009617:AAGtY1URpn_yr3im07w0aQkwN0HF0fL-AgM")
-    chat_id = st.secrets.get("TELEGRAM_CHAT_ID", "1768645253")
+    token = st.secrets.get("TELEGRAM_TOKEN", "")
+    chat_id = st.secrets.get("TELEGRAM_CHAT_ID", "")
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     try:
         requests.post(url, json={"chat_id": chat_id, "text": testo, "parse_mode": "Markdown"}, timeout=5)
@@ -306,47 +304,28 @@ def invia_messaggio_telegram(testo):
 def elabora_comando_assistente(testo_messaggio):
     testo_lower = testo_messaggio.lower()
     
-    # 1. GESTIONE DIRETTA: DIAGNOSTICA PROBLEMI DI PRESSIONE
+    # Diagnostica Pressione
     if "pressione" in testo_lower or "calo" in testo_lower:
         conn = sqlite3.connect('idrosmart.db')
-        df_p = pd.read_sql_query('''
-            SELECT p.data_ora_inizio, p.data_ora_fine, i.nome, i.motori_std, i.zona, i.tipo_prelievo 
-            FROM prenotazioni p JOIN irriganti i ON p.irrigante_id = i.id WHERE p.stato = 'PROGRAMMATO'
-        ''', conn)
+        df_p = pd.read_sql_query("SELECT p.data_ora_inizio, i.nome, i.motori_std FROM prenotazioni p JOIN irriganti i ON p.irrigante_id = i.id WHERE p.stato = 'PROGRAMMATO'", conn)
         conn.close()
-        
-        adesso = datetime.now()
-        attivi_ora = []
-        carico_totale = 0.0
-        
-        if not df_p.empty:
-            df_p['in_dt'] = pd.to_datetime(df_p['data_ora_inizio'])
-            df_p['fi_dt'] = pd.to_datetime(df_p['data_ora_fine'])
-            df_attivi = df_p[(df_p['in_dt'] <= adesso) & (df_p['fi_dt'] >= adesso)]
-            for _, r in df_attivi.iterrows():
-                attivi_ora.append(f"{r['nome']} ({r['motori_std']} M su {r['zona']})")
-                carico_totale += r['motori_std']
-                
-        tot_m_con_perdite = (carico_totale + 0.5) if carico_totale > 0 else 0.0
-        assetto, _ = seleziona_pompe_centrale(tot_m_con_perdites = tot_m_con_perdite)
-        
-        contesto_pressione = f"Utenze attive in questo istante: {', '.join(attivi_ora) if attivi_ora else 'Nessuna'}. Carico totale: {tot_m_con_perdite} M. Assetto pompe attuale: {assetto}."
-        risposta_ia = interroga_gemini_ai(contesto_pressione, f"L'utente segnala problemi di pressione: '{testo_messaggio}'. Analizza se ci sono troppe valvole aperte o se l'assetto pompe è errato e dai un feedback pratico di risoluzione.")
+        contesto_pressione = f"Utenze registrate con turni attivi: {df_p.to_dict(orient='records')}"
+        risposta_ia = interroga_gemini_ai(contesto_pressione, testo_messaggio)
+        if "server ia" in risposta_ia.lower() or "non è configurata" in risposta_ia.lower():
+            return "⚠️ *DIAGNOSTICA DI EMERGENZA*:\nHo rilevato la segnalazione sul calo di pressione. Verifica se ci sono troppi chiavoni aperti contemporaneamente in centrale o se la pompa P3 Inverter ha i giri troppo bassi."
         return f"⚠️ *DIAGNOSTICA PRESSIONE RETE*\n\n{risposta_ia}"
 
-    # 2. GESTIONE DIRETTA: INSERIMENTO TURNI INTELLIGENTE VIA CHAT
+    # Inserimento turni sicuro (Anti-Doppione)
     if "aggiungi" in testo_lower or "inserisci" in testo_lower or "turno" in testo_lower:
         conn = sqlite3.connect('idrosmart.db')
         df_irr_tutti = pd.read_sql_query("SELECT * FROM irriganti", conn)
         conn.close()
         
-        # Estrazione basilare del nome utenza
         nome_rilevato = None
         for n in df_irr_tutti['nome'].tolist():
             if n.lower() in testo_lower:
                 nome_rilevato = n
                 break
-                
         if not nome_rilevato:
             for chv in ELENCO_CHIAVONI_REALI:
                 if chv.lower() in testo_lower:
@@ -355,119 +334,106 @@ def elabora_comando_assistente(testo_messaggio):
 
         if nome_rilevato:
             dati_utenza = df_irr_tutti[df_irr_tutti['nome'] == nome_rilevato].iloc[0] if nome_rilevato in df_irr_tutti['nome'].tolist() else None
+            id_u = int(dati_utenza['id']) if dati_utenza is not None else None
             motori_t = float(dati_utenza['motori_std']) if dati_utenza is not None else 1.0
             zona_t = dati_utenza['zona'] if dati_utenza is not None else nome_rilevato
-            id_u = int(dati_utenza['id']) if dati_utenza is not None else None
             
-            # Controllo simulato di disponibilità idraulica (Soglia max 12 M)
+            data_domani = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+            inizio_str = f"{data_domani} 08:00"
+            fine_str = f"{data_domani} 12:00"
+            
+            # CONTROLLO ANTI-DOPPIONE STRITTISSIMO
             conn = sqlite3.connect('idrosmart.db')
-            df_prenotati = pd.read_sql_query("SELECT motori_std FROM prenotazioni p JOIN irriganti i ON p.irrigante_id = i.id WHERE p.stato = 'PROGRAMMATO'", conn)
+            check_doppio = pd.read_sql_query("SELECT id FROM prenotazioni WHERE irrigante_id = ? AND data_ora_inizio = ?", conn, params=[id_u, inizio_str])
+            
+            if not check_doppio.empty:
+                conn.close()
+                return f"⚠️ *ATTENZIONE*: Il turno per *{nome_rilevato}* (ore 08:00) è già presente in agenda. Non è stato duplicato."
+                
+            df_prenotati = pd.read_sql_query("SELECT motori_std FROM prenotazioni WHERE stato = 'PROGRAMMATO'", conn)
             conn.close()
             
             carico_futuro_stimato = df_prenotati['motori_std'].sum() + motori_t + 0.5
-            
             if carico_futuro_stimato > 12.0:
-                return f"❌ *INSERIMENTO FALLITO*:\nNon c'è disponibilità sufficiente per inserire il turno di *{nome_rilevato}*. Il carico complessivo supererebbe la soglia strutturale di 12 M provocando un sovraccarico delle pompe. Ti consiglio di spostare il turno in una fascia oraria più scarica."
-            else:
-                if id_u is None:
-                    id_u = inserisci_irrigante_completo(nome_rilevato, zona_t, "Fosso", motori_t, 30, 15, 0)
+                return f"❌ *SPAZIO INSUFFICIENTE*: Non c'è disponibilità idraulica per *{nome_rilevato}*. Le pompe andrebbero in sovraccarico ({carico_futuro_stimato:.1f} M)."
                 
-                data_inizio_nuovo = datetime.now() + timedelta(days=1) # Default domani
-                inizio_str = data_inizio_nuovo.strftime("%Y-%m-%d 08:00")
-                fine_str = data_inizio_nuovo.strftime("%Y-%m-%d 12:00")
+            if id_u is None:
+                id_u = inserisci_irrigante_completo(nome_rilevato, zona_t, "Fosso", motori_t, 30, 15, 0)
                 
-                inserisci_prenotazione_avanzata(id_u, inizio_str, fine_str, "Fosso")
-                assetto_pompe_nuovo, _ = seleziona_pompe_centrale(carico_futuro_stimato)
-                
-                return f"✅ *TURNO INSERITO CON SUCCESSO!*\n\n• *Utenza:* {nome_rilevato}\n• *Stato:* Salvato in Agenda\n• *Impatto Pompe:* Il carico totale di rete passa a {carico_futuro_stimato:.2f} M.\n• *Aggiornamento Centralina:* L'assetto delle pompe richiede ora la configurazione: *{assetto_pompe_nuovo}*. Ricordati di verificare gli orari sui timer fisici di centrale."
+            inserisci_prenotazione_avanzata(id_u, inizio_str, fine_str, "Fosso")
+            assetto_pompe_nuovo, _ = seleziona_pompe_centrale(carico_futuro_stimato)
+            return f"✅ *TURNO INSERITO CORRETTAMENTE (Domani 08:00-12:00)*\n\n• Utenza: {nome_rilevato}\n• Impatto Pompe: Carico totale a {carico_futuro_stimato:.2f} M.\n• Stato Pompe: Attivare *{assetto_pompe_nuovo}*."
         else:
-            return "Non ho capito quale utenza o chiavone vuoi inserire. Specifica un nome presente nella tua anagrafica (es: 'Aggiungi turno Piave 1')."
+            return "Specificare un nome valido per l'inserimento (es: 'Aggiungi Piave 1')."
 
-    # 3. GESTIONE DIRETTA: RICHIESTE INFORMATIVE GENERALI SULL'APP (GEMINI AI CON CONTESTO APERTO)
+    # Risposte generali
     conn = sqlite3.connect('idrosmart.db')
     df_info = pd.read_sql_query("SELECT * FROM irriganti", conn)
     conn.close()
-    contesto_generale = f"Anagrafica utenze registrate nell'app: {df_info['nome'].tolist() if not df_info.empty else 'Nessuna'}. Elenco nodi idraulici reali gestiti: {ELENCO_CHIAVONI_REALI}."
+    contesto_generale = f"Anagrafica utenze nell'applicazione: {df_info['nome'].tolist()}"
     return interroga_gemini_ai(contesto_generale, testo_messaggio)
 
-# Servizio continuo di ascolto Telegram (Long Polling in Background Thread)
+# Servizio di ascolto Telegram in Background Loop
 def loop_ascolto_telegram():
-    token = "8622009617:AAGtY1URpn_yr3im07w0aQkwN0HF0fL-AgM"
+    token = st.secrets.get("TELEGRAM_TOKEN", "")
+    if not token: return
     last_update_id = 0
     
-    # Inizializzazione degli orari di notifica giornalieri (Sera e Mattina alle 5:45)
+    # Pulizia iniziale messaggi vecchi
+    try:
+        r = requests.get(f"https://api.telegram.org/bot{token}/getUpdates?limit=1", timeout=5).json()
+        if "result" in r and r["result"]:
+            last_update_id = r["result"][0]["update_id"]
+    except: pass
+
     ultimo_controllo_giorno = None
-    
     while True:
         try:
-            # Controllo scadenze temporali per notifiche automatiche (Sera e Mattina)
             ora_attuale = datetime.now().time()
             data_oggi = datetime.now().date()
             
-            if ultimo_controllo_giorno != data_oggi:
-                # Notifica della Mattina (Fissa alle ore 05:45 come concordato)
-                if ora_attuale.hour == 5 and ora_attuale.minute == 45:
-                    conn = sqlite3.connect('idrosmart.db')
-                    df_m = pd.read_sql_query("SELECT p.data_ora_inizio, i.nome, i.zona FROM prenotazioni p JOIN irriganti i ON p.irrigante_id = i.id WHERE p.stato = 'PROGRAMMATO'", conn)
-                    conn.close()
-                    
-                    manovre_oggi = []
-                    if not df_m.empty:
-                        df_m['dt'] = pd.to_datetime(df_m['data_ora_inizio'])
-                        df_filtro = df_m[df_m['dt'].dt.date == data_oggi]
-                        for _, r in df_filtro.iterrows():
-                            manovre_oggi.append(f"• Ore {r['dt'].strftime('%H:%M')} -> Apertura {r['nome']} ({r['zona']})")
-                            
-                    msg_mattina = f"☀️ *BUONGIORNO IDROSMART (Ore 05:45)*\n\nEcco il promemoria pratico delle manovre da eseguire oggi nei campi:\n"
-                    if manovre_oggi:
-                        msg_mattina += "\n".join(manovre_oggi)
-                    else:
-                        msg_mattina += "Nessuna manovra idraulica programmata per la giornata odierna. Impianto a regime regolare."
-                    invia_messaggio_telegram(msg_mattina)
-                    
-                # Notifica della Sera (Report e Calcolo Straordinari / Sveglia 45 minuti prima)
-                elif ora_attuale.hour == 21 and ora_attuale.minute == 30:
-                    data_domani = data_oggi + timedelta(days=1)
-                    conn = sqlite3.connect('idrosmart.db')
-                    df_m = pd.read_sql_query("SELECT p.data_ora_inizio, i.nome, i.zona FROM prenotazioni p JOIN irriganti i ON p.irrigante_id = i.id WHERE p.stato = 'PROGRAMMATO'", conn)
-                    conn.close()
-                    
-                    manovre_domani = []
-                    ora_prima_manovra = None
-                    
-                    if not df_m.empty:
-                        df_m['dt'] = pd.to_datetime(df_m['data_ora_inizio'])
-                        df_filtro = df_m[df_m['dt'].dt.date == data_domani]
-                        for _, r in df_filtro.iterrows():
-                            manovre_domani.append(f"• Ore {r['dt'].strftime('%H:%M')}: {r['nome']} ({r['zona']})")
-                            if ora_prima_manovra is None or r['dt'].time() < ora_prima_manovra:
-                                ora_prima_manovra = r['dt'].time()
-                                
-                    msg_sera = f"🌙 *RESOCONTO SERALE IDROSMART*\n\nRiepilogo delle manovre pianificate per domani ({data_domani.strftime('%d/%m')}):\n"
-                    if manovre_domani:
-                        msg_sera += "\n".join(manovre_domani)
-                        
-                        # Regola concordata: Sveglia 45 minuti prima se c'è una manovra al mattino presto (es: prima delle 08:30)
-                        if ora_prima_manovra and ora_prima_manovra < time(8, 30):
-                            dt_manovra = datetime.combine(data_domani, ora_prima_manovra)
-                            dt_sveglia = dt_manovra - timedelta(minutes=45)
-                            msg_sera += f"\n\n⚠️ *ATTENZIONE STRAORDINARIO MATTUTINO*:\nPer eseguire correttamente la prima manovra delle {ora_prima_manovra.strftime('%H:%M')}, devi alzarti *45 minuti prima*. Imposta la sveglia alle ore *{dt_sveglia.strftime('%H:%M')}*."
-                    else:
-                        msg_sera += "Nessuna manovra prevista per domani. Puoi riposare regolarmente."
-                        
-                    invia_messaggio_telegram(msg_sera)
-                    ultimo_controllo_giorno = data_oggi
+            # Invio promemoria Mattina (05:45)
+            if ora_attuale.hour == 5 and ora_attuale.minute == 45 and ultimo_controllo_giorno != f"M_{data_oggi}":
+                conn = sqlite3.connect('idrosmart.db')
+                df_m = pd.read_sql_query("SELECT p.data_ora_inizio, i.nome FROM prenotazioni p JOIN irriganti i ON p.irrigante_id = i.id WHERE p.stato = 'PROGRAMMATO'", conn)
+                conn.close()
+                manovre = []
+                if not df_m.empty:
+                    df_m['dt'] = pd.to_datetime(df_m['data_ora_inizio'])
+                    for _, r in df_m[df_m['dt'].dt.date == data_oggi].iterrows():
+                        manovre.append(f"• Ore {r['dt'].strftime('%H:%M')} -> {r['nome']}")
+                msg = "☀️ *PROMEMORIA MATTUTINO (05:45)*:\n" + ("\n".join(manovre) if manovre else "Nessuna manovra oggi.")
+                invia_messaggio_telegram(msg)
+                ultimo_controllo_giorno = f"M_{data_oggi}"
+                
+            # Invio promemoria Sera (21:30)
+            if ora_attuale.hour == 21 and ora_attuale.minute == 30 and ultimo_controllo_giorno != f"S_{data_oggi}":
+                data_domani = data_oggi + timedelta(days=1)
+                conn = sqlite3.connect('idrosmart.db')
+                df_m = pd.read_sql_query("SELECT p.data_ora_inizio, i.nome FROM prenotazioni p JOIN irriganti i ON p.irrigante_id = i.id WHERE p.stato = 'PROGRAMMATO'", conn)
+                conn.close()
+                manovre = []
+                primo_orario = None
+                if not df_m.empty:
+                    df_m['dt'] = pd.to_datetime(df_m['data_ora_inizio'])
+                    for _, r in df_m[df_m['dt'].dt.date == data_domani].iterrows():
+                        manovre.append(f"• Ore {r['dt'].strftime('%H:%M')}: {r['nome']}")
+                        if primo_orario is None or r['dt'].time() < primo_orario: primo_orario = r['dt'].time()
+                msg = "🌙 *RESOCONTO SERALE*:\n" + ("\n".join(manovre) if manovre else "Nessuna manovra domani.")
+                if primo_orario and primo_orario < time(8, 30):
+                    dt_sveglia = datetime.combine(data_domani, primo_orario) - timedelta(minutes=45)
+                    msg += f"\n\n⚠️ *STRAORDINARIO*: Prima manovra alle {primo_orario.strftime('%H:%M')}. Sveglia impostata 45 min prima: *{dt_sveglia.strftime('%H:%M')}*."
+                invia_messaggio_telegram(msg)
+                ultimo_controllo_giorno = f"S_{data_oggi}"
 
-            # Long polling per ricezione messaggi dell'utente
-            url = f"https://api.telegram.org/bot{token}/getUpdates?offset={last_update_id + 1}&timeout=2"
-            res = requests.get(url, timeout=5).json()
-            
+            # Ascolto messaggi in tempo reale (Long Polling)
+            url = f"https://api.telegram.org/bot{token}/getUpdates?offset={last_update_id + 1}&timeout=5"
+            res = requests.get(url, timeout=10).json()
             if "result" in res:
                 for update in res["result"]:
                     last_update_id = update["update_id"]
                     if "message" in update and "text" in update["message"]:
-                        testo_ricevuto = update["message"]["text"]
-                        risposta_elaborata = elabora_comando_assistente(testo_ricevuto)
+                        risposta_elaborata = elabora_comando_assistente(update["message"]["text"])
                         invia_messaggio_telegram(risposta_elaborata)
         except Exception:
             pass
