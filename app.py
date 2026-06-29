@@ -2,10 +2,6 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 from datetime import datetime, timedelta, time
-import threading
-import time as time_lib
-import requests
-import json
 
 st.set_page_config(page_title="IdroSmart PRO 365", layout="wide", page_icon="💧")
 
@@ -142,7 +138,7 @@ def cancella_prenotazione(id_prenotazione):
     conn.commit()
     conn.close()
 
-# --- FUNZIONI DI CANCELLAZIONE MASSIVA ---
+# --- FUNZIONI DI CANCELLAZIONE MASSIVA RICHIESTE ---
 def cancella_turni_settimana(data_rif):
     inizio_sett = data_rif - timedelta(days=data_rif.weekday())
     fine_sett = inizio_sett + timedelta(days=6)
@@ -221,6 +217,16 @@ def ottieni_giorno_settimana(data_obj):
 
 inizializza_tabelle_personalizzate()
 
+# --- MANUTENZIONE PREVENTIVA DEL DATABASE (Risoluzione Radicale Errori Stringhe Date Incomplete) ---
+try:
+    conn_manutenzione = sqlite3.connect('idrosmart.db')
+    cursor_m = conn_manutenzione.cursor()
+    cursor_m.execute("DELETE FROM prenotazioni WHERE length(data_ora_inizio) < 16 OR length(data_ora_fine) < 16")
+    conn_manutenzione.commit()
+    conn_manutenzione.close()
+except Exception as e:
+    pass
+
 # --- CARICAMENTO DATI ---
 conn = sqlite3.connect('idrosmart.db')
 df_irriganti = pd.read_sql_query("SELECT * FROM irriganti ORDER BY nome", conn)
@@ -233,8 +239,8 @@ df_tutti_attivi = pd.read_sql_query('''
 conn.close()
 
 if not df_tutti_attivi.empty:
-    df_tutti_attivi['data_inizio_dt'] = pd.to_datetime(df_tutti_attivi['data_ora_inizio'])
-    df_tutti_attivi['data_fine_dt'] = pd.to_datetime(df_tutti_attivi['data_ora_fine'])
+    df_tutti_attivi['data_inizio_dt'] = pd.to_datetime(df_tutti_attivi['data_ora_inizio'], errors='raise')
+    df_tutti_attivi['data_fine_dt'] = pd.to_datetime(df_tutti_attivi['data_ora_fine'], errors='raise')
 
 if 'data_corrente' not in st.session_state:
     st.session_state.data_corrente = datetime.now().date()
@@ -244,9 +250,6 @@ def sync_da_agenda(): st.session_state.data_corrente = st.session_state.data_age
 def sync_da_home(): st.session_state.data_corrente = st.session_state.data_home
 def giorno_precedente(): st.session_state.data_corrente -= timedelta(days=1)
 def giorno_successivo(): st.session_state.data_corrente += timedelta(days=1)
-
-def settimana_precedente(): st.session_state.data_corrente -= timedelta(days=7)
-def settimana_successiva(): st.session_state.data_corrente += timedelta(days=7)
 
 irriganti_giorno_corrente = []
 rangoni_oggi_global = False
@@ -349,21 +352,28 @@ with tab_dashboard:
         
     irrigante_scelto = st.sidebar.selectbox("Seleziona Contadino / Chiavone", opzioni_sb)
     
-    if tipo_elemento_scelto == "Agricoltori" and not df_irriganti.empty and irrigante_scelto in df_irriganti['nome'].tolist():
-        dati_irr = df_irriganti[df_irriganti['nome'] == irrigante_scelto].iloc[0]
-        id_irrigante_db = int(dati_irr['id'])
-        tipo_prelievo_default = dati_irr['tipo_prelievo']
-        motori_default = float(dati_irr['motori_std'])
-        zona_default = dati_irr['zona']
+    # --- RISOLUZIONE INTEGRITYERROR CHIAVONI ---
+    # Verifica l'esistenza del nome nel database globale a prescindere dal tipo selezionato
+    conn = sqlite3.connect('idrosmart.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, zona, tipo_prelievo, motori_std FROM irriganti WHERE nome = ?", (irrigante_scelto,))
+    riga_esistente = cursor.fetchone()
+    conn.close()
+
+    if riga_esistente:
+        id_irrigante_db = int(riga_esistente[0])
+        zona_default = riga_esistente[1]
+        tipo_prelievo_default = riga_esistente[2]
+        motori_default = float(riga_esistente[3])
     else:
         id_irrigante_db = None
-        tipo_prelievo_default = "Fosso"
+        tipo_prelievo_default = "Fosso" if tipo_elemento_scelto == "Chiavoni" else "Diretta"
         motori_default = 1.0
         zona_default = irrigante_scelto if irrigante_scelto in ELENCO_CHIAVONI_REALI else "Valvola Contrappesi"
         
     tipo_pesca_scelta = st.sidebar.radio("Modalità Prelievo", ["Fosso", "Diretta"], index=0 if tipo_prelievo_default == "Fosso" else 1)
     
-    if tipo_pesca_scelta == "Fosso":
+    if tipo_pesca_scelta == "Fosso" or tipo_elemento_scelto == "Chiavoni":
         motori_scelti_sb = st.sidebar.number_input("Motori totali da far uscire (M):", min_value=0.0, max_value=12.0, value=motori_default, step=0.1)
         giri_calc_sb, _ = calcola_giri_chiavone(motori_scelti_sb, zona_default)
         st.sidebar.info(f"⚙️ Giri Chiavone calcolati a fianco: **{giri_calc_sb:.2f} Giri**")
@@ -386,29 +396,38 @@ with tab_dashboard:
     fosso_sporco_attivo = st.sidebar.checkbox("⚠️ Segnala Fosso Sporco")
 
     if st.sidebar.button("Salva Turno in Agenda"):
-        if id_irrigante_db is None:
-            id_irrigante_db = inserisci_irrigante_completo(irrigante_scelto, zona_default, tipo_pesca_scelta, motori_scelti_sb, 30, 15, 0)
-            
-        lista_coppie_date = []
-        if disabilita_date:
-            passo = datetime.now().date()
-            fine_stagione = datetime(datetime.now().year, 9, 30).date()
-            while passo <= fine_stagione:
-                if MAP_GIORNI_ING[passo.weekday()] in giorni_ripetizione:
-                    lista_coppie_date.append((passo, passo))
-                passo += timedelta(days=1)
+        if not irrigante_scelto:
+            st.sidebar.error("Seleziona un elemento valido!")
         else:
-            lista_coppie_date.append((data_inizio, data_fine))
+            if id_irrigante_db is None:
+                # Forza i chiavoni reali ad avere i parametri coerenti e la modalità fosso nativa
+                zona_ins = zona_default
+                prelievo_ins = "Fosso" if irrigante_scelto in ELENCO_CHIAVONI_REALI else tipo_pesca_scelta
+                id_irrigante_db = inserisci_irrigante_completo(irrigante_scelto, zona_ins, prelievo_ins, motori_scelti_sb, 30, 15, 0)
+                
+            lista_coppie_date = []
+            if disabilita_date:
+                passo = datetime.now().date()
+                fine_stagione = datetime(datetime.now().year, 9, 30).date()
+                while passo <= fine_stagione:
+                    if MAP_GIORNI_ING[passo.weekday()] in giorni_ripetizione:
+                        lista_coppie_date.append((passo, passo))
+                    passo += timedelta(days=1)
+            else:
+                lista_coppie_date.append((data_inizio, data_fine))
+                
+            salva_ora_fine = "23:59" if ora_fine_str == "24:00" else ora_fine_str
             
-        salva_ora_fine = "23:59" if ora_fine_str == "24:00" else ora_fine_str
-            
-        for d_ini, d_fin in lista_coppie_date:
-            inizio_completo = f"{d_ini} {ora_inizio_str}"
-            fine_completo = f"{d_fin} {salva_ora_fine}"
-            inserisci_prenotazione_avanzata(id_irrigante_db, inizio_completo, fine_completo, tipo_pesca_scelta)
-            
-        st.sidebar.success("Turni registrati correttamente!")
-        st.rerun()
+            # Forza la configurazione del turno a 'Fosso' per i chiavoni reali
+            config_salv = "Fosso" if irrigante_scelto in ELENCO_CHIAVONI_REALI else tipo_pesca_scelta
+                
+            for d_ini, d_fin in lista_coppie_date:
+                inizio_completo = f"{d_ini} {ora_inizio_str}"
+                fine_completo = f"{d_fin} {salva_ora_fine}"
+                inserisci_prenotazione_avanzata(id_irrigante_db, inizio_completo, fine_completo, config_salv)
+                
+            st.sidebar.success("Turni registrati correttamente!")
+            st.rerun()
 
     # --- SEZIONE: SELEZIONE CANCELLAZIONE MASSIVA TURNI ---
     st.sidebar.markdown("---")
@@ -468,21 +487,23 @@ with tab_dashboard:
                 "Modalità": r['config_scelta'], "Carico Richiesto (Motori M)": f"{r['motori_std']:.2f} M", "Portata (l/s)": f"{portata_s:.0f} l/s"
             })
         
+        # Rendering Tabella
         st.table(pd.DataFrame(righe_tabella))
         
+        # --- NUOVA FUNZIONALITÀ: CANCELLAZIONE SINGOLA GIORNO PER GIORNO ---
         st.markdown("##### 🗑️ Rimozione Manuale Veloce Turni del Giorno:")
         for idx, r in df_giorno_attivi.iterrows():
             c_del1, c_del2 = st.columns([5, 1])
             with c_del1: 
                 h_f_vis = "24:00" if r['data_fine_dt'].strftime('%H:%M') in ["23:59", "00:00"] else r['data_fine_dt'].strftime('%H:%M')
-                st.write(f"🚜 Turno: **{r['nome']}** | Orario: {r['data_inizio_dt'].strftime('%H:%M')} - {h_f_vis} ({r['zona']})")
+                st.write(f"🚜 Turno: **{r['nome']}** | Orario: {r['data_inizio_dt'].strftime('%H:%M')} - {h_f_vis} ({r['zona']}) | Modalità: *{r['config_scelta']}*")
             with c_del2:
                 if st.button("🗑️ Rimuovi", key=f"del_dash_{r['id']}", use_container_width=True):
                     cancella_prenotazione(int(r['id']))
                     st.rerun()
 
 # =========================================================
-# TAB 2: AGENDA GIORNALIERA DELLE MANOVRE
+# TAB 2: AGENDA GIORNALIERA DELLE MANOVRE (SOLO DA ANAGRAFICA)
 # =========================================================
 with tab_agenda:
     st.title("📋 Agenda Giornaliera delle Manovre")
@@ -556,58 +577,117 @@ with tab_agenda:
             st.info("Nessuna manovra programmata.")
 
 # =========================================================
-# TAB 3: VIDEATA SALA MACCHINE (TIMER SETTIMANALE)
+# TAB 3: VIDEATA SALA MACCHINE (TIMER SETTIMANALE AUTOMATIZZATO 24H)
 # =========================================================
 with tab_sala_macchine:
-    inizio_sett_sm = st.session_state.data_corrente - timedelta(days=st.session_state.data_corrente.weekday())
-    fine_sett_sm = inizio_sett_sm + timedelta(days=6)
+    st.title("📟 Quadro Controllo Automatizzato Orologi di Centrale")
+    st.write("La sezione mostra esclusivamente gli intervalli di accensione e spegnimento operativi delle pompe P3 e P4 calcolati in base al carico totale di motori richiesto in ogni istante del giorno.")
     
-    st.title("📟 Quadro Controllo Orologi di Centrale")
-    st.subheader(f"📅 Orari validi per la settimana dal {inizio_sett_sm.strftime('%d/%m/%Y')} al {fine_sett_sm.strftime('%d/%m/%Y')}")
-    
-    c_sm1, c_sm2 = st.columns(2)
-    with c_sm1: st.button("⬅️ Settimana Precedente", on_click=settimana_precedente, use_container_width=True, key="sm_p_b")
-    with c_sm2: st.button("➡️ Settimana Successiva", on_click=settimana_successiva, use_container_width=True, key="sm_n_b")
-    
-    fasce_p4 = {g: [] for g in GIORNI_SETTIMANA_LISTA}
-    fasce_p3 = {g: [] for g in GIORNI_SETTIMANA_LISTA}
-    
-    if not df_tutti_attivi.empty:
-        for idx, row in df_tutti_attivi.iterrows():
-            data_st_dt = row['data_inizio_dt'].date()
-            if inizio_sett_sm <= data_st_dt <= fine_sett_sm:
-                g_inz = ottieni_giorno_settimana(data_st_dt)
-                if g_inz not in GIORNI_SETTIMANA_LISTA: continue
-                
-                pmp_curr = "P4" if row['motori_std'] <= 6.0 else "P3"
-                start_calc = row['data_inizio_dt'] - timedelta(minutes=(int(row['minuti_distanza']) + 30)) if row['config_scelta'] == "Fosso" else row['data_inizio_dt']
-                
-                h_f_sm = "24:00" if row['data_fine_dt'].strftime('%H:%M') in ["23:59", "00:00"] else row['data_fine_dt'].strftime('%H:%M')
-                stringa_f = f"⏱️ {start_calc.strftime('%H:%M')} — {h_f_sm}"
-                
-                if pmp_curr == "P4": fasce_p4[g_inz].append(stringa_f)
-                else: fasce_p3[g_inz].append(stringa_f)
+    # Inizializzazione della variabile temporale dedicata ed esclusiva per la Sala Macchine
+    if "data_settimana_macchine" not in st.session_state:
+        st.session_state.data_settimana_macchine = st.session_state.data_corrente
 
-    for g in GIORNI_SETTIMANA_LISTA:
-        fasce_p4[g] = sorted(list(set(fasce_p4[g])))
-        fasce_p3[g] = sorted(list(set(fasce_p3[g])))
+    # Pulsanti di navigazione settimanale ad uso esclusivo di questo tab
+    c_sm1, c_sm2, c_sm3 = st.columns([1, 2, 1])
+    with c_sm1:
+        if st.button("⬅️ Settimana Precedente", key="sm_sett_prev", use_container_width=True):
+            st.session_state.data_settimana_macchine -= timedelta(days=7)
+            st.rerun()
+    with c_sm2:
+        inizio_sett_sm = st.session_state.data_settimana_macchine - timedelta(days=st.session_state.data_settimana_macchine.weekday())
+        fine_sett_sm = inizio_sett_sm + timedelta(days=6)
+        st.markdown(f"<h4 style='text-align:center; color:#17a2b8;'>📅 Settimana da {inizio_sett_sm.strftime('%d/%m')} a {fine_sett_sm.strftime('%d/%m/%Y')}</h4>", unsafe_allow_html=True)
+    with c_sm3:
+        if st.button("Settimana Successiva ➡️", key="sm_sett_next", use_container_width=True):
+            st.session_state.data_settimana_macchine += timedelta(days=7)
+            st.rerun()
 
-    c_disp4, c_disp3 = st.columns(2)
-    with c_disp4:
-        st.error("📟 TIMERS SETTIMANALI: [ POMPA P4 ] (Bassa Pressione)")
-        for g in GIORNI_SETTIMANA_LISTA:
-            st.markdown(f"**🔹 {g}**")
-            if not fasce_p4[g]: st.caption("🔴 Impianto OFF")
-            else:
-                for f in fasce_p4[g]: st.code(f, language="text")
+    # Ciclo lineare di analisi sui 7 giorni della settimana selezionata
+    for giorno_idx in range(7):
+        giorno_esaminato = inizio_sett_sm + timedelta(days=giorno_idx)
+        nome_giorno_it = GIORNI_IT.get(giorno_esaminato.strftime('%A'), giorno_esaminato.strftime('%A'))
+        
+        st.markdown(f"<h5 style='background-color:#f0f2f6; padding:6px; border-radius:5px; margin-top:15px;'>📆 {nome_giorno_it} {giorno_esaminato.strftime('%d/%m/%Y')}</h5>", unsafe_allow_html=True)
+        
+        # Filtra tutti i turni attivi (agricoltori + chiavoni) che coprono il giorno preso in esame
+        if not df_tutti_attivi.empty:
+            df_giorno_sm = df_tutti_attivi[
+                (df_tutti_attivi['data_inizio_dt'].dt.date <= giorno_esaminato) & 
+                (df_tutti_attivi['data_fine_dt'].dt.date >= giorno_esaminato)
+            ].copy()
+        else:
+            df_giorno_sm = pd.DataFrame()
+            
+        # Creazione dei vettori di stato a 96 quarti d'ora (24 ore * 4 quarti)
+        p4_attiva = [False] * 96
+        p3_attiva = [False] * 96
+        
+        for quarto in range(96):
+            ora = quarto // 4
+            minuto = (quarto % 4) * 15
+            tempo_quarto_inizio = datetime.combine(giorno_esaminato, time(ora, minuto))
+            tempo_quarto_fine = tempo_quarto_inizio + timedelta(minutes=15)
+            
+            # Calcolo del carico idraulico reale di motori espresso in questo specifico quarto d'ora
+            motori_quarto = 0.0
+            if not df_giorno_sm.empty:
+                for _, turno in df_giorno_sm.iterrows():
+                    if turno['data_inizio_dt'] < tempo_quarto_fine and turno['data_fine_dt'] > tempo_quarto_inizio:
+                        motori_quarto += float(turno['motori_std'])
+            
+            # Determinazione degli assetti macchina (con costante delle perdite di rete incluse se l'impianto eroga)
+            if motori_quarto > 0:
+                totale_con_perdite = motori_quarto + 0.5
                 
-    with c_disp3:
-        st.info("📟 TIMERS SETTIMANALI: [ POMPA P3 - INVERTER ] (Alta Pressione)")
-        for g in GIORNI_SETTIMANA_LISTA:
-            st.markdown(f"**🔹 {g}**")
-            if not fasce_p3[g]: st.caption("🔴 Impianto OFF")
+                if totale_con_perdite <= 6.0:
+                    p4_attiva[quarto] = True
+                elif totale_con_perdite <= 8.0:
+                    p3_attiva[quarto] = True
+                else:
+                    # In caso di superamento di 8 M si attivano contemporaneamente entrambe le pompe
+                    p4_attiva[quarto] = True
+                    p3_attiva[quarto] = True
+
+        # Funzione logica interna per raggruppare i quarti d'ora adiacenti in fasce orarie visualizzabili
+        def unisci_fasce_orarie(array_presenza):
+            fasce = []
+            in_blocco = False
+            inizio_blocco = None
+            
+            for q in range(96):
+                if array_presenza[q] and not in_blocco:
+                    in_blocco = True
+                    h_ini = q // 4
+                    m_ini = (q % 4) * 15
+                    inizio_blocco = f"{h_ini:02d}:{m_ini:02d}"
+                elif not array_presenza[q] and in_blocco:
+                    in_blocco = False
+                    h_fin = q // 4
+                    m_fin = (q % 4) * 15
+                    fasce.append(f"⏱️ {inizio_blocco} — {h_fin:02d}:{m_fin:02d}")
+            
+            if in_blocco:
+                fasce.append(f"⏱️ {inizio_blocco} — 24:00")
+            return fasce
+
+        fasce_p4 = unisci_fasce_orarie(p4_attiva)
+        fasce_p3 = unisci_fasce_orarie(p3_attiva)
+
+        # Rendering grafico diviso nelle due colonne pulite native per le pompe
+        col_p4_sm, col_p3_sm = st.columns(2)
+        with col_p4_sm:
+            st.markdown("<b style='color:#dc3545;'>📟 ORARI ACCENSIONE POMPA P4 (Bassa Pressione)</b>", unsafe_allow_html=True)
+            if fasce_p4:
+                for f in fasce_p4: st.code(f, language="text")
             else:
-                for f in fasce_p3[g]: st.code(f, language="text")
+                st.caption("Pompa P4 Spenta per l'intera giornata")
+                
+        with col_p3_sm:
+            st.markdown("<b style='color:#17a2b8;'>📟 ORARI ACCENSIONE POMPA P3 (Alta Pressione / Inverter)</b>", unsafe_allow_html=True)
+            if fasce_p3:
+                for f in fasce_p3: st.code(f, language="text")
+            else:
+                st.caption("Pompa P3 Spenta per l'intera giornata")
 
 # =========================================================
 # TAB 4: GESTIONE ANAGRAFICA
@@ -724,7 +804,7 @@ with tab_anagrafica:
                 if st.form_submit_button("➕ Aggiungi Manovra a questo Profilo"):
                     if desc_manovra:
                         inserisci_manovra_personalizzata(id_selezionato, desc_manovra, val_manovra, unita_manovra)
-                        st.success("Manovra aggiunta!")
+                        st.success("Manovra aggiunto!")
                         st.rerun()
 
             conn = sqlite3.connect('idrosmart.db')
