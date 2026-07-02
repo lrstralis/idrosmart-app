@@ -174,7 +174,7 @@ def cancella_turni_generale():
     conn.commit()
     conn.close()
 
-def seleziona_pompe_centrale(motori):
+def selezionia_pompe_centrale(motori):
     if motori == 0: return "IMPIANTO FERMO", []
     elif motori <= 6.0: return "Solo POMPA P4 attiva", ["P4"]
     elif motori <= 8.0: return "Solo POMPA P3 (Inverter) attiva", ["P3"]
@@ -292,7 +292,7 @@ if not df_tutti_attivi.empty:
 
 motori_pre_perdite_global = df_tutti_attivi[(df_tutti_attivi['data_inizio_dt'].dt.date <= st.session_state.data_corrente) & (df_tutti_attivi['data_fine_dt'].dt.date >= st.session_state.data_corrente)]['motori_std'].sum() if not df_tutti_attivi.empty else 0.0
 motori_giorno_global = (motori_pre_perdite_global + 0.5) if motori_pre_perdite_global > 0 else 0.0
-testo_pompe_g, _ = seleziona_pompe_centrale(motori_giorno_global)
+testo_pompe_g, _ = selezionia_pompe_centrale(motori_giorno_global)
 esito_colore_g, _ = ottieni_colore_stato_semplice(motori_giorno_global, rangoni_oggi_global)
 _, portata_globale_g_ls = calcola_giri_chiavone(motori_giorno_global, "Generico")
 
@@ -481,7 +481,7 @@ with tab_dashboard:
 
     motori_pre_perdite = df_giorno_attivi['motori_std'].sum() if not df_giorno_attivi.empty else 0.0
     motori_giorno = (motori_pre_perdite + 0.5) if motori_pre_perdite > 0 else 0.0
-    testo_pompe, _ = seleziona_pompe_centrale(motori_giorno)
+    testo_pompe, _ = selezionia_pompe_centrale(motori_giorno)
     esito_colore, _ = ottieni_colore_stato_semplice(motori_giorno, rangoni_oggi)
     _, portata_globale_ls = calcola_giri_chiavone(motori_giorno, "Generico")
 
@@ -690,7 +690,7 @@ with tab_sala_macchine:
             st.markdown("<b style='color:#dc3545;'>📟 ORARI ACCENSIONE POMPA P4 (Bassa Pressione)</b>", unsafe_allow_html=True)
             if fasce_p4:
                 for idx_f, fascia_oraria_testo in enumerate(fasce_p4): 
-                    st.code(fascia_oraria_testo, language="text", key=f"code_p4_{giorno_idx}_{idx_f}")
+                    st.code(fascia_oraria_testo, language="text")
             else:
                 st.caption("Pompa P4 Spenta per l'intera giornata")
                 
@@ -698,7 +698,7 @@ with tab_sala_macchine:
             st.markdown("<b style='color:#17a2b8;'>📟 ORARI ACCENSIONE POMPA P3 (Alta Pressione / Inverter)</b>", unsafe_allow_html=True)
             if fasce_p3:
                 for idx_f, fascia_oraria_testo in enumerate(fasce_p3): 
-                    st.code(fascia_oraria_testo, language="text", key=f"code_p3_{giorno_idx}_{idx_f}")
+                    st.code(fascia_oraria_testo, language="text")
             else:
                 st.caption("Pompa P3 Spenta per l'intera giornata")
 
