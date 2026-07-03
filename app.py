@@ -174,21 +174,27 @@ def cancella_turni_generale():
     conn.commit()
     conn.close()
 
+# MODIFICATO PUNTO 2: Nuovi limiti di funzionamento pompe
 def selezionia_pompe_centrale(motori):
     if motori == 0: return "IMPIANTO FERMO", []
-    elif motori <= 6.0: return "Solo POMPA P4 attiva", ["P4"]
-    elif motori <= 8.0: return "Solo POMPA P3 (Inverter) attiva", ["P3"]
+    elif motori <= 5.0: return "Solo POMPA P4 attiva", ["P4"]
+    elif motori <= 10.0: return "Solo POMPA P3 (Inverter) attiva", ["P3"]
     elif motori <= 12.0: return "ENTRAMBE ATTIVE (P4 + P3) - Spinta Max 240 l/s", ["P4", "P3"]
     else: return "SOVRACCARICO (Oltre i 12 M)", ["P4", "P3"]
 
+# MODIFICATO PUNTO 2: Nuova scala colori intermedia
 def ottieni_colore_stato_semplice(motori_totali, rangoni_attivo):
     if motori_totali == 0: return "#A0A0A0", "🟢 IMPIANTO FERMO"
     if rangoni_attivo:
         if motori_totali > 12.0: return "#dc3545", f"🔴 TEST FALLITO ({motori_totali:.1f} M)!"
-        elif motori_totali >= 11.0: return "#fd7e14", "🟠 SOGLIA CRITICA TEST"
+        elif motori_totali >= 11.0: return "#ffc107", "🟠 SOGLIA CRITICA TEST (GIALLO)"
         else: return "#28a745", "🟢 REGIME DI PROVA"
+    
     if motori_totali > 12.0: return "#dc3545", "🔴 SOVRACCARICO STRUTTURALE"
-    return "#28a745", "🟢 CARICO RETE REGOLARE"
+    elif motori_totali > 11.0: return "#ffc107", "🟡 CARICO STRUTTURALE QUASI MAX (GIALLO)"
+    elif motori_totali > 10.0: return "#e83e8c", "🌸 ZONA DI TRANSIZIONE (ROSA)"
+    elif motori_totali > 5.0: return "#007bff", "🔵 REGIME ALTA PRESSIONE P3 (BLU)"
+    return "#28a745", "🟢 CARICO RETE REGOLARE P4 (VERDE)"
 
 def analizza_orario_lavoro(dt_obj):
     t = dt_obj.time()
@@ -213,11 +219,12 @@ def ottimizza_orario_manovra(dt_originale, ore_sovraccarico=0, motori_correnti=0
         
     return dt_originale
 
+# MODIFICATO PUNTO 2: Colori di sfondo box in base ai nuovi limiti
 def determines_info_pompe_home(motori):
     if motori == 0: return "#ffffff", "Nessuna"
-    elif motori <= 6.0: return "#d4edda", "P4"
-    elif motori <= 8.0: return "#cce5ff", "P3"
-    else: return "#f8d7da", "P3 + P4"
+    elif motori <= 5.0: return "#d4edda", "P4" # Verde chiaro
+    elif motori <= 10.0: return "#cce5ff", "P3" # Blu chiaro
+    else: return "#f8d7da", "P3 + P4" # Rosso/Rosa chiaro
 
 def ottieni_giorno_settimana(data_obj):
     return GIORNI_IT.get(data_obj.strftime("%A"), data_obj.strftime("%A"))
@@ -313,6 +320,14 @@ with tab_home:
         <p style="color:white; margin:0; font-size:16px; font-weight:500;">ASSETTO IMPIANTO: {testo_pompe_g} | PORTATA COMPLESSIVA RETE: {portata_globale_g_ls:.0f} l/s</p>
     </div>
     """, unsafe_allow_html=True)
+
+    # IMPLEMENTATO PUNTO 3: Allarme di sicurezza se va solo P4 (Carico <= 5.0) senza Valvola Contrappesi aperta
+    if 0 < motori_giorno_global <= 5.0 and not df_giorno_attivi_global.empty:
+        ha_contrappesi = df_giorno_attivi_global['nome'].str.contains("Valvola Contrappesi", case=False).any()
+        if not ha_contrappesi:
+            carico_reale_senza_perdite = motori_pre_perdite_global
+            if carico_reale_senza_perdite < 2.5:
+                st.error("⚠️ **ALLARME DI SICUREZZA RETE (P4 SOLA)**: La Valvola Contrappesi è CHIUSA e il carico attuale è inferiore alla soglia di sicurezza per mantenere la pressione sotto i 2 bar. **Aprire immediatamente almeno 2.5 - 3 motori**, preferibilmente su: *Rangoni, Vaccara o Dogaro di Ravarino*.")
     
     c_h1, c_h2, c_h3 = st.columns([1, 2, 1])
     with c_h1: st.button("⬅️ Giorno Precedente", on_click=giorno_precedente, use_container_width=True, key="home_prev")
@@ -334,13 +349,16 @@ with tab_home:
         colore_loop, _ = ottieni_colore_stato_semplice(motori_loop, rangoni_loop)
         
         with col_sett[i]:
-            if st.button(f"{nome_giorno_it} {giorno_loop.strftime('%d/%m')} ({motori_loop:.1f} M)", key=f"btn_giorno_{giorno_loop.strftime('%Y%m%d')}", use_container_width=True):
+            if st.button(f"{nome_giorno_it} {giorno_loop.strftime('%d/%m')}", key=f"btn_giorno_{giorno_loop.strftime('%Y%m%d')}", use_container_width=True):
                 st.session_state.data_corrente = giorno_loop
                 st.session_state.data_settimana_macchine = giorno_loop
                 st.rerun()
             
             bordo_giorno = "border: 3px solid #17a2b8;" if giorno_loop == st.session_state.data_corrente else "border: 1px solid rgba(0,0,0,0.1);"
-            st.markdown(f'<div style="background-color:{colore_loop}; padding:6px; border-radius:5px; text-align:center; color:white; font-weight:bold; margin-bottom:8px; {bordo_giorno}"><div style="font-size:14px;">{motori_loop:.1f} M</div></div>', unsafe_allow_html=True)
+            
+            # Sistemato colore testo basato sullo sfondo per leggibilità (Giallo necessita testo scuro)
+            colore_testo = "black" if (motori_loop > 11.0 and motori_loop <= 12.0 and not rangoni_loop) else "white"
+            st.markdown(f'<div style="background-color:{colore_loop}; padding:6px; border-radius:5px; text-align:center; color:{colore_testo}; font-weight:bold; margin-bottom:8px; {bordo_giorno}"><div style="font-size:14px;">{motori_loop:.1f} M</div></div>', unsafe_allow_html=True)
             
             if df_loop_attivi.empty:
                 st.markdown("<div style='text-align:center; color:#888; font-size:12px;'>Centrale Off</div>", unsafe_allow_html=True)
@@ -485,13 +503,21 @@ with tab_dashboard:
     esito_colore, _ = ottieni_colore_stato_semplice(motori_giorno, rangoni_oggi)
     _, portata_globale_ls = calcola_giri_chiavone(motori_giorno, "Generico")
 
+    # Sistemato colore del testo per leggibilità dello stato
+    colore_testo_dash = "black" if (motori_giorno > 11.0 and motori_giorno <= 12.0 and not rangoni_oggi) else "white"
     st.markdown(f"""
     <div style="background-color:{esito_colore}; padding:20px; border-radius:10px; text-align:center; margin-bottom:25px;">
-        <h2 style="color:white; margin:0;">📟 STATO IDRAULICO RETE DEL GIORNO: {st.session_state.data_corrente.strftime('%d/%m/%Y')}</h2>
-        <h1 style="color:white; margin:10px 0 0 0; font-size:45px; font-weight:bold;">{motori_giorno:.2f} M totali impegnati <span style='font-size:20px; font-weight:normal;'>(Incluso +0.50 M perdite)</span></h1>
-        <p style="color:white; margin:5px 0 0 0; font-size:18px; font-weight:500;">ASSETTO CENTRALINA: {testo_pompe} | PORTATA RETE: {portata_globale_ls:.0f} l/s</p>
+        <h2 style="color:{colore_testo_dash}; margin:0;">📟 STATO IDRAULICO RETE DEL GIORNO: {st.session_state.data_corrente.strftime('%d/%m/%Y')}</h2>
+        <h1 style="color:{colore_testo_dash}; margin:10px 0 0 0; font-size:45px; font-weight:bold;">{motori_giorno:.2f} M totali impegnati <span style='font-size:20px; font-weight:normal;'>(Incluso +0.50 M perdite)</span></h1>
+        <p style="color:{colore_testo_dash}; margin:5px 0 0 0; font-size:18px; font-weight:500;">ASSETTO CENTRALINA: {testo_pompe} | PORTATA RETE: {portata_globale_ls:.0f} l/s</p>
     </div>
     """, unsafe_allow_html=True)
+
+    # IMPLEMENTATO PUNTO 3: Allarme anche nella vista Turni & Rete
+    if 0 < motori_giorno <= 5.0 and not df_giorno_attivi.empty:
+        ha_contrappesi = df_giorno_attivi['nome'].str.contains("Valvola Contrappesi", case=False).any()
+        if not ha_contrappesi and motori_pre_perdite < 2.5:
+            st.error("⚠️ **ALLARME DI SICUREZZA RETE (P4 SOLA)**: La Valvola Contrappesi è CHIUSA e il carico attuale è inferiore alla soglia di sicurezza per mantenere la pressione sotto i 2 bar. **Aprire immediatamente almeno 2.5 - 3 motori**, preferibilmente su: *Rangoni, Vaccara o Dogaro di Ravarino*.")
 
     st.subheader(f"📋 Dettaglio Utenze Attive Giornaliere ({st.session_state.data_corrente.strftime('%d/%m/%Y')})")
     if df_giorno_attivi.empty:
@@ -575,6 +601,55 @@ with tab_agenda:
                 except OverflowError:
                     pass
 
+        # IMPLEMENTATO PUNTO 3: Inserimento avviso di fermo macchina e ritardo P3 direttamente nell'Agenda del Giorno
+        if not df_giorno_attivi.empty:
+            # Ricostruiamo i quarti d'ora per rilevare i passaggi P4 -> P3
+            p4_attiva_det = [False] * 96
+            p3_attiva_det = [False] * 96
+            motori_per_quarto = [0.0] * 96
+            
+            for q in range(96):
+                h = q // 4
+                m = (q % 4) * 15
+                t_inizio = datetime.combine(st.session_state.data_corrente, time(h, m))
+                t_fine = t_inizio + timedelta(minutes=15)
+                
+                m_q = 0.0
+                for _, t_r in df_giorno_attivi.iterrows():
+                    l_f = t_r['data_fine_dt']
+                    if l_f.time() == time(23, 59):
+                        l_f = datetime.combine(l_f.date(), time(23, 59, 59))
+                    if t_r['data_inizio_dt'] < t_fine and l_f >= t_inizio:
+                        m_q += float(t_r['motori_std'])
+                
+                if m_q > 0:
+                    tot_p = m_q + 0.5
+                    motori_per_quarto[q] = tot_p
+                    if tot_p <= 5.0:
+                        p4_attiva_det[q] = True
+                    elif tot_p <= 10.0:
+                        p3_attiva_det[q] = True
+                    elif tot_p <= 12.0:
+                        p4_attiva_det[q] = True
+                        p3_attiva_det[q] = True
+
+            # Controllo passaggi da P4 attiva a P3 attiva (e P4 si spegne)
+            for q in range(1, 96):
+                if p4_attiva_det[q-1] and not p3_attiva_det[q-1] and p3_attiva_det[q] and not p4_attiva_det[q]:
+                    ora_passaggio = q // 4
+                    min_passaggio = (q % 4) * 15
+                    dt_passaggio = datetime.combine(st.session_state.data_corrente, time(ora_passaggio, min_passaggio))
+                    
+                    carico_nuovo = motori_per_quarto[q]
+                    ritardo = 4 if (5.0 < carico_nuovo <= 7.0) else 3
+                    
+                    manovre_totali.append({
+                        "Data/Ora": dt_passaggio,
+                        "Tipo": "📟 Orologio Centrale P3",
+                        "ForzaOraria": "INFO",
+                        "Descrizione": f"Fermo macchina di sicurezza: la P4 è stata spenta. Attendere {ritardo} minuti prima di avviare la P3."
+                    })
+
         if len(manovre_totali) > 0:
             df_manovre = pd.DataFrame(manovre_totali).sort_values(by="Data/Ora").drop_duplicates(subset=["Data/Ora", "Descrizione"])
             df_giorno = df_manovre[df_manovre['Data/Ora'].dt.date == st.session_state.data_corrente]
@@ -586,7 +661,10 @@ with tab_agenda:
                     ora_f = "24:00" if m['Data/Ora'].strftime('%H:%M') in ["23:59", "00:00"] and m['ForzaOraria'] == "INFO" else m['Data/Ora'].strftime("%H:%M")
                     
                     if m['ForzaOraria'] == "INFO":
-                        st.success(f"🌊 **ORE {ora_f}** — [{m['Tipo']}] {m['Descrizione']}")
+                        if "Fermo macchina" in m['Descrizione']:
+                            st.info(f"⚙️ **ORE {ora_f}** — [{m['Tipo']}] {m['Descrizione']}")
+                        else:
+                            st.success(f"🌊 **ORE {ora_f}** — [{m['Tipo']}] {m['Descrizione']}")
                     else:
                         stato_lavoro, colore_allarme = analizza_orario_lavoro(m['Data/Ora'])
                         if stato_lavoro == "IN_ORARIO":
@@ -597,7 +675,7 @@ with tab_agenda:
             st.info("Nessuna manovra fisica pianificata o configurata in anagrafica per oggi.")
 
 # =========================================================
-# TAB 3: VIDEATA SALA MACCHINE (TIMER SETTIMANALE BLINDATO)
+# TAB 3: VIDEATA SALA MACCHINE (TIMER SETTIMANALE CON FILTRI FERMO MACCHINA)
 # =========================================================
 with tab_sala_macchine:
     st.title("📟 Quadro Controllo Automatizzato Orologi di Centrale")
@@ -633,7 +711,9 @@ with tab_sala_macchine:
             
         p4_attiva = [False] * 96
         p3_attiva = [False] * 96
+        motori_slot = [0.0] * 96
         
+        # MODIFICATO PUNTO 2: Calcolo stati pompe con le nuove soglie (5.0, 10.0, 12.0)
         for quarto in range(96):
             ora = quarto // 4
             minuto = (quarto % 4) * 15
@@ -652,16 +732,18 @@ with tab_sala_macchine:
             
             if motori_quarto > 0:
                 totale_con_perdite = motori_quarto + 0.5
+                motori_slot[quarto] = totale_con_perdite
                 
-                if totale_con_perdite <= 6.0:
+                if totale_con_perdite <= 5.0:
                     p4_attiva[quarto] = True
-                elif totale_con_perdite <= 8.0:
+                elif totale_con_perdite <= 10.0:
                     p3_attiva[quarto] = True
                 else:
                     p4_attiva[quarto] = True
                     p3_attiva[quarto] = True
 
-        def unisci_fasce_orarie(array_presenza):
+        # MODIFICATO PUNTO 3: Generazione intervalli testuali includendo la nota sul fermo macchina se c'è transizione
+        def unisci_fasce_orarie_con_ritardi(array_presenza, array_p4_precedente, array_carichi):
             fasce = []
             in_blocco = False
             inizio_blocco = None
@@ -671,7 +753,21 @@ with tab_sala_macchine:
                     in_blocco = True
                     h_ini = q // 4
                     m_ini = (q % 4) * 15
-                    inizio_blocco = f"{h_ini:02d}:{m_ini:02d}"
+                    
+                    # Rilevamento transizione: P4 era accesa e P3 era spenta, ora P3 si accende e P4 si spegne
+                    # (Se vanno insieme non si applica)
+                    if array_p4_precedente is not None and q > 0:
+                        p4_era_attiva = array_p4_precedente[q-1] and not array_presenza[q-1]
+                        p4_ora_spenta = not array_p4_precedente[q]
+                        if p4_era_attiva and p4_ora_spenta:
+                            carico_att = array_carichi[q]
+                            ritardo = 4 if (5.0 < carico_att <= 7.0) else 3
+                            inizio_blocco = f"{h_ini:02d}:{m_ini:02d} (⚠️ Avviare dopo {ritardo} min di Fermo Macchina)"
+                        else:
+                            inizio_blocco = f"{h_ini:02d}:{m_ini:02d}"
+                    else:
+                        inizio_blocco = f"{h_ini:02d}:{m_ini:02d}"
+                        
                 elif not array_presenza[q] and in_blocco:
                     in_blocco = False
                     h_fin = q // 4
@@ -682,8 +778,8 @@ with tab_sala_macchine:
                 fasce.append(f"⏱️ {inizio_blocco} — 24:00")
             return fasce
 
-        fasce_p4 = unisci_fasce_orarie(p4_attiva)
-        fasce_p3 = unisci_fasce_orarie(p3_attiva)
+        fasce_p4 = unisci_fasce_orarie_con_ritardi(p4_attiva, None, motori_slot)
+        fasce_p3 = unisci_fasce_orarie_con_ritardi(p3_attiva, p4_attiva, motori_slot)
 
         col_p4_sm, col_p3_sm = st.columns(2)
         with col_p4_sm:
