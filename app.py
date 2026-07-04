@@ -182,7 +182,7 @@ def cancella_turni_generale():
     conn.commit()
     conn.close()
 
-def seleziona_pompe_centrale(motori):
+def selezionao_pompe_centrale(motori):
     if motori == 0: return "IMPIANTO FERMO", []
     elif motori <= 6.0: return "Solo POMPA P4 attiva", ["P4"]
     elif motori <= 8.0: return "Solo POMPA P3 (Inverter) attiva", ["P3"]
@@ -255,11 +255,8 @@ df_tutti_attivi = pd.read_sql_query(text('''
     ORDER BY p.data_ora_inizio ASC
 '''), engine)
 
+# --- BLOCCO CORRETTO PER LA CONVERSIONE DATE ---
 if not df_tutti_attivi.empty:
-    maschera_valida = df_tutti_attivi['data_ora_inizio'].str.match(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$') & \
-                      df_tutti_attivi['data_fine_dt'] = pd.to_datetime(df_tutti_attivi['data_ora_fine']) if 'data_ora_fine' in df_tutti_attivi else None
-    
-    # Ricontrolla formati date prima di processare
     df_tutti_attivi = df_tutti_attivi[df_tutti_attivi['data_ora_inizio'].str.len() >= 16].copy()
     if not df_tutti_attivi.empty:
         df_tutti_attivi['data_inizio_dt'] = pd.to_datetime(df_tutti_attivi['data_ora_inizio'])
@@ -299,7 +296,7 @@ if not df_tutti_attivi.empty:
 
 motori_pre_perdite_global = df_tutti_attivi[(df_tutti_attivi['data_inizio_dt'].dt.date <= st.session_state.data_corrente) & (df_tutti_attivi['data_fine_dt'].dt.date >= st.session_state.data_corrente)]['motori_std'].sum() if not df_tutti_attivi.empty else 0.0
 motori_giorno_global = (motori_pre_perdite_global + 0.5) if motori_pre_perdite_global > 0 else 0.0
-testo_pompe_g, _ = seleziona_pompe_centrale(motori_giorno_global)
+testo_pompe_g, _ = selezionao_pompe_centrale(motori_giorno_global)
 esito_colore_g, _ = ottieni_colore_stato_semplice(motori_giorno_global, rangoni_oggi_global)
 _, portata_globale_g_ls = calcola_giri_chiavone(motori_giorno_global, "Generico")
 
@@ -488,7 +485,7 @@ with tab_dashboard:
 
     motori_pre_perdite = df_giorno_attivi['motori_std'].sum() if not df_giorno_attivi.empty else 0.0
     motori_giorno = (motori_pre_perdite + 0.5) if motori_pre_perdite > 0 else 0.0
-    testo_pompe, _ = seleziona_pompe_centrale(motori_giorno)
+    testo_pompe, _ = selezionao_pompe_centrale(motori_giorno)
     esito_colore, _ = ottieni_colore_stato_semplice(motori_giorno, rangoni_oggi)
     _, portata_globale_ls = calcola_giri_chiavone(motori_giorno, "Generico")
 
