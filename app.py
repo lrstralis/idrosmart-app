@@ -2,7 +2,7 @@ import streamlit as st
 import psycopg2
 import pandas as pd
 from datetime import datetime, timedelta, time
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 
 st.set_page_config(page_title="IdroSmart PRO 365", layout="wide", page_icon="💧")
 
@@ -105,7 +105,6 @@ def inizializza_tabelle_personalizzate():
     conn.commit()
     conn.close()
 
-# MODIFICA APPLICATA QUI (Risolto errore typo di 'minuti_distanza')
 def inserisci_irrigante_completo(nome, zona, prelievo, motori, distanza, extra_fosso, giorni_ant):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -246,15 +245,15 @@ except Exception:
 
 # --- CARICAMENTO E SANITIZZAZIONE RIGIDA DEI DATI ---
 engine = get_sqlalchemy_engine()
-df_irriganti = pd.read_sql_query("SELECT * FROM irriganti ORDER BY nome", engine)
-df_tutti_attivi = pd.read_sql_query('''
+df_irriganti = pd.read_sql_query(text("SELECT * FROM irriganti ORDER BY nome"), engine)
+df_tutti_attivi = pd.read_sql_query(text('''
     SELECT p.id, i.id AS irr_id, i.nome, i.motori_std, i.zona, i.minuti_distanza, i.extra_fosso_sporco, i.giorni_anticipo_manovra,
            p.data_ora_inizio, p.data_ora_fine, p.config_scelta
     FROM prenotazioni p 
     LEFT JOIN irriganti i ON p.irrigante_id = i.id
     WHERE p.stato = 'PROGRAMMATO' AND i.id IS NOT NULL
     ORDER BY p.data_ora_inizio ASC
-''', engine)
+'''), engine)
 
 if not df_tutti_attivi.empty:
     maschera_valida = df_tutti_attivi['data_ora_inizio'].str.match(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$') & \
@@ -543,7 +542,7 @@ with tab_agenda:
         st.info("Nessuna manovra presente nel sistema.")
     else:
         manovre_totali = []
-        df_manovre_p = pd.read_sql_query("SELECT * FROM manovre_personalizzate", engine)
+        df_manovre_p = pd.read_sql_query(text("SELECT * FROM manovre_personalizzate"), engine)
 
         for idx, row in df_tutti_attivi.iterrows():
             in_dt = row['data_inizio_dt']
@@ -821,7 +820,12 @@ with tab_anagrafica:
                         st.success("Manovra aggiunta!")
                         st.rerun()
 
-            df_m_salvate = pd.read_sql_query("SELECT * FROM manovre_personalizzate WHERE irrigante_id = %s", engine, params=[id_selezionato])
+            # CORREZIONE APPLICATA QUI (Gestione sicura dei parametri Postgres con text() e dict)
+            df_m_salvate = pd.read_sql_query(
+                text("SELECT * FROM manovre_personalizzate WHERE irrigante_id = :id"), 
+                engine, 
+                params={"id": int(id_selezionato)}
+            )
 
             if not df_m_salvate.empty:
                 st.caption("Manovre registrate attive per questo profilo:")
