@@ -257,9 +257,10 @@ df_tutti_attivi = pd.read_sql_query(text('''
 
 if not df_tutti_attivi.empty:
     maschera_valida = df_tutti_attivi['data_ora_inizio'].str.match(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$') & \
-                      df_tutti_attivi['data_ora_fine'].str.match(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$')
-    df_tutti_attivi = df_tutti_attivi[maschera_valida].copy()
+                      df_tutti_attivi['data_fine_dt'] = pd.to_datetime(df_tutti_attivi['data_ora_fine']) if 'data_ora_fine' in df_tutti_attivi else None
     
+    # Ricontrolla formati date prima di processare
+    df_tutti_attivi = df_tutti_attivi[df_tutti_attivi['data_ora_inizio'].str.len() >= 16].copy()
     if not df_tutti_attivi.empty:
         df_tutti_attivi['data_inizio_dt'] = pd.to_datetime(df_tutti_attivi['data_ora_inizio'])
         df_tutti_attivi['data_fine_dt'] = pd.to_datetime(df_tutti_attivi['data_ora_fine'])
@@ -694,7 +695,7 @@ with tab_sala_macchine:
             st.markdown("<b style='color:#dc3545;'>📟 ORARI ACCENSIONE POMPA P4 (Bassa Pressione)</b>", unsafe_allow_html=True)
             if fasce_p4:
                 for idx_f, fascia_oraria_testo in enumerate(fasce_p4): 
-                    st.code(fascia_oraria_testo, language="text", key=f"code_p4_{giorno_idx}_{idx_f}")
+                    st.code(fascia_oraria_testo, language=None, key=f"code_p4_{giorno_idx}_{idx_f}")
             else:
                 st.caption("Pompa P4 Spenta per l'intera giornata")
                 
@@ -702,7 +703,7 @@ with tab_sala_macchine:
             st.markdown("<b style='color:#17a2b8;'>📟 ORARI ACCENSIONE POMPA P3 (Alta Pressione / Inverter)</b>", unsafe_allow_html=True)
             if fasce_p3:
                 for idx_f, fascia_oraria_testo in enumerate(fasce_p3): 
-                    st.code(fascia_oraria_testo, language="text", key=f"code_p3_{giorno_idx}_{idx_f}")
+                    st.code(fascia_oraria_testo, language=None, key=f"code_p3_{giorno_idx}_{idx_f}")
             else:
                 st.caption("Pompa P3 Spenta per l'intera giornata")
 
@@ -820,7 +821,6 @@ with tab_anagrafica:
                         st.success("Manovra aggiunta!")
                         st.rerun()
 
-            # CORREZIONE APPLICATA QUI (Gestione sicura dei parametri Postgres con text() e dict)
             df_m_salvate = pd.read_sql_query(
                 text("SELECT * FROM manovre_personalizzate WHERE irrigante_id = :id"), 
                 engine, 
