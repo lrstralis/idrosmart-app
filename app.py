@@ -1,7 +1,8 @@
 import streamlit as st
-import sqlite3
+import psycopg2
 import pandas as pd
 from datetime import datetime, timedelta, time
+from sqlalchemy import create_engine
 
 st.set_page_config(page_title="IdroSmart PRO 365", layout="wide", page_icon="💧")
 
@@ -22,9 +23,18 @@ ELENCO_CHIAVONI_REALI = ["Valvola Contrappesi", "Dogaro di Ravarino", "Piave 1",
 if "manovre_temporanee_registrazione" not in st.session_state:
     st.session_state.manovre_temporanee_registrazione = []
 
-# --- FUNZIONE DI CONNESSIONE SICURA CON TIMEOUT (Previene 'database is locked') ---
+# --- FUNZIONE DI CONNESSIONE SICURA CON POSTGRESQL (NEON) ---
 def get_db_connection():
-    return sqlite3.connect('idrosmart.db', timeout=15)
+    # Recupera l'URL di connessione dai Secrets di Streamlit Cloud
+    db_url = st.secrets["connections"]["postgresql"]["url"]
+    return psycopg2.connect(db_url)
+
+def get_sqlalchemy_engine():
+    db_url = st.secrets["connections"]["postgresql"]["url"]
+    # Corregge il prefisso per renderlo compatibile con SQLAlchemy >= 2.0
+    if db_url.startswith("postgresql://"):
+        db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    return create_engine(db_url)
 
 # --- FUNZIONE DI CALCOLO GIRI CHIAVONE BASATA SULLA TABELLA UNIFICATA ---
 def calcola_giri_chiavone(motori_totali, nome_chiavone):
@@ -69,27 +79,27 @@ def calcola_giri_chiavone(motori_totali, nome_chiavone):
     giri = tabella_reale[chiave_approssimata][pressione_chiavone]
     return giri, motori_totali * 20.0
 
-# --- FUNZIONI DATABASE ---
+# --- FUNZION DATABASE (ADATTATE A SINTASSI POSTGRESQL DI NEON) ---
 def inizializza_tabelle_personalizzate():
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS irriganti (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL, zona TEXT, tipo_prelievo TEXT,
+            id SERIAL PRIMARY KEY, nome TEXT NOT NULL, zona TEXT, tipo_prelievo TEXT,
             motori_std REAL DEFAULT 1.0, minuti_distanza INTEGER DEFAULT 30,
             extra_fosso_sporco INTEGER DEFAULT 15, giorni_anticipo_manovra INTEGER DEFAULT 0
         )
     ''')
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS prenotazioni (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, irrigante_id INTEGER,
+            id SERIAL PRIMARY KEY, irrigante_id INTEGER,
             data_ora_inizio TEXT, data_ora_fine TEXT, config_scelta TEXT, stato TEXT DEFAULT 'PROGRAMMATO',
             FOREIGN KEY(irrigante_id) REFERENCES irriganti(id) ON DELETE CASCADE
         )
     ''')
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS manovre_personalizzate (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, irrigante_id INTEGER,
+            id SERIAL PRIMARY KEY, irrigante_id INTEGER,
             descrizione TEXT NOT NULL, valore_anticipo REAL NOT NULL, unita_anticipo TEXT NOT NULL,
             FOREIGN KEY(irrigante_id) REFERENCES irriganti(id) ON DELETE CASCADE
         )
@@ -101,10 +111,10 @@ def inserisci_irrigante_completo(nome, zona, prelievo, motori, distanza, extra_f
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
-        INSERT INTO irriganti (nome, zona, tipo_prelievo, motori_std, minuti_distanza, extra_fosso_sporco, giorni_anticipo_manovra)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO irriganti (nome, zona, tipo_prelievo, motori_std, minutes_distanza, extra_fosso_sporco, giorni_anticipo_manovra)
+        VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id
     ''', (nome, zona, prelievo, motori, distanza, extra_fosso, giorni_ant))
-    id_generato = cursor.lastrowid
+    id_generato = cursor.fetchone()[0]
     conn.commit()
     conn.close()
     return id_generato
@@ -113,7 +123,7 @@ def aggiorna_irrigante_completo(id_irr, nome, zona, prelievo, motori, distanza, 
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
-        UPDATE irriganti SET nome=?, zona=?, tipo_prelievo=?, motori_std=?, minuti_distanza=?, extra_fosso_sporco=?, giorni_anticipo_manovra=? WHERE id=?
+        UPDATE irriganti SET nome=%s, zona=%s, tipo_prelievo=%s, motori_std=%s, minuti_distanza=%s, extra_fosso_sporco=%s, giorni_anticipo_manovra=%s WHERE id=%s
     ''', (nome, zona, prelievo, motori, distanza, extra_fosso, giorni_ant, id_irr))
     conn.commit()
     conn.close()
@@ -121,28 +131,28 @@ def aggiorna_irrigante_completo(id_irr, nome, zona, prelievo, motori, distanza, 
 def inserisci_manovra_personalizzata(irr_id, desc, val, unita):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute('INSERT INTO manovre_personalizzate (irrigante_id, descrizione, valore_anticipo, unita_anticipo) VALUES (?, ?, ?, ?)', (irr_id, desc, val, unita))
+    cursor.execute('INSERT INTO manovre_personalizzate (irrigante_id, descrizione, valore_anticipo, unita_anticipo) VALUES (%s, %s, %s, %s)', (irr_id, desc, val, unita))
     conn.commit()
     conn.close()
 
 def cancella_manovra_personalizzata(manovra_id):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute('DELETE FROM manovre_personalizzate WHERE id = ?', (manovra_id,))
+    cursor.execute('DELETE FROM manovre_personalizzate WHERE id = %s', (manovra_id,))
     conn.commit()
     conn.close()
 
 def inserisci_prenotazione_avanzata(irrigante_id, inizio, fine, config):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute('INSERT INTO prenotazioni (irrigante_id, data_ora_inizio, data_ora_fine, config_scelta) VALUES (?, ?, ?, ?)', (irrigante_id, inizio, fine, config))
+    cursor.execute('INSERT INTO prenotazioni (irrigante_id, data_ora_inizio, data_ora_fine, config_scelta) VALUES (%s, %s, %s, %s)', (irrigante_id, inizio, fine, config))
     conn.commit()
     conn.close()
 
 def cancella_prenotazione(id_prenotazione):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM prenotazioni WHERE id = ?", (id_prenotazione,))
+    cursor.execute("DELETE FROM prenotazioni WHERE id = %s", (id_prenotazione,))
     conn.commit()
     conn.close()
 
@@ -153,8 +163,8 @@ def cancella_turni_settimana(data_rif):
     cursor = conn.cursor()
     cursor.execute('''
         DELETE FROM prenotazioni 
-        WHERE date(substr(data_ora_inizio, 1, 10)) >= date(?) 
-          AND date(substr(data_ora_inizio, 1, 10)) <= date(?)
+        WHERE date(substring(data_ora_inizio from 1 for 10)) >= date(%s) 
+          AND date(substring(data_ora_inizio from 1 for 10)) <= date(%s)
     ''', (str(inizio_sett), str(fine_sett)))
     conn.commit()
     conn.close()
@@ -163,7 +173,7 @@ def cancella_turni_mese(data_rif):
     anno_mese = data_rif.strftime("%Y-%m")
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM prenotazioni WHERE substr(data_ora_inizio, 1, 7) = ?", (anno_mese,))
+    cursor.execute("DELETE FROM prenotazioni WHERE substring(data_ora_inizio from 1 for 7) = %s", (anno_mese,))
     conn.commit()
     conn.close()
 
@@ -174,10 +184,10 @@ def cancella_turni_generale():
     conn.commit()
     conn.close()
 
-def selezionia_pompe_centrale(motori):
+def seleziona_pompe_centrale(motori):
     if motori == 0: return "IMPIANTO FERMO", []
-    elif motori <= 5.0: return "Solo POMPA P4 attiva", ["P4"]
-    elif motori <= 10.0: return "Solo POMPA P3 (Inverter) attiva", ["P3"]
+    elif motori <= 6.0: return "Solo POMPA P4 attiva", ["P4"]
+    elif motori <= 8.0: return "Solo POMPA P3 (Inverter) attiva", ["P3"]
     elif motori <= 12.0: return "ENTRAMBE ATTIVE (P4 + P3) - Spinta Max 240 l/s", ["P4", "P3"]
     else: return "SOVRACCARICO (Oltre i 12 M)", ["P4", "P3"]
 
@@ -185,14 +195,10 @@ def ottieni_colore_stato_semplice(motori_totali, rangoni_attivo):
     if motori_totali == 0: return "#A0A0A0", "🟢 IMPIANTO FERMO"
     if rangoni_attivo:
         if motori_totali > 12.0: return "#dc3545", f"🔴 TEST FALLITO ({motori_totali:.1f} M)!"
-        elif motori_totali >= 11.0: return "#ffc107", "🟠 SOGLIA CRITICA TEST (GIALLO)"
+        elif motori_totali >= 11.0: return "#fd7e14", "🟠 SOGLIA CRITICA TEST"
         else: return "#28a745", "🟢 REGIME DI PROVA"
-    
     if motori_totali > 12.0: return "#dc3545", "🔴 SOVRACCARICO STRUTTURALE"
-    elif motori_totali > 11.0: return "#ffc107", "🟡 CARICO STRUTTURALE QUASI MAX (GIALLO)"
-    elif motori_totali > 10.0: return "#e83e8c", "🌸 ZONA DI TRANSIZIONE (ROSA)"
-    elif motori_totali > 5.0: return "#007bff", "🔵 REGIME ALTA PRESSIONE P3 (BLU)"
-    return "#28a745", "🟢 CARICO RETE REGOLARE P4 (VERDE)"
+    return "#28a745", "🟢 CARICO RETE REGOLARE"
 
 def analizza_orario_lavoro(dt_obj):
     t = dt_obj.time()
@@ -219,15 +225,17 @@ def ottimizza_orario_manovra(dt_originale, ore_sovraccarico=0, motori_correnti=0
 
 def determines_info_pompe_home(motori):
     if motori == 0: return "#ffffff", "Nessuna"
-    elif motori <= 5.0: return "#d4edda", "P4" 
-    elif motori <= 10.0: return "#cce5ff", "P3" 
-    else: return "#f8d7da", "P3 + P4" 
+    elif motori <= 6.0: return "#d4edda", "P4"
+    elif motori <= 8.0: return "#cce5ff", "P3"
+    else: return "#f8d7da", "P3 + P4"
 
 def ottieni_giorno_settimana(data_obj):
     return GIORNI_IT.get(data_obj.strftime("%A"), data_obj.strftime("%A"))
 
+# Inizializza le tabelle su Neon PostgreSQL all'avvio
 inizializza_tabelle_personalizzate()
 
+# --- MANUTENZIONE PREVENTIVA AVANZATA (Pulizia rigida dati corrotti) ---
 try:
     conn_manutenzione = get_db_connection()
     cursor_m = conn_manutenzione.cursor()
@@ -237,8 +245,9 @@ try:
 except Exception:
     pass
 
-conn = get_db_connection()
-df_irriganti = pd.read_sql_query("SELECT * FROM irriganti ORDER BY nome", conn)
+# --- CARICAMENTO E SANITIZZAZIONE RIGIDA DEI DATI ---
+engine = get_sqlalchemy_engine()
+df_irriganti = pd.read_sql_query("SELECT * FROM irriganti ORDER BY nome", engine)
 df_tutti_attivi = pd.read_sql_query('''
     SELECT p.id, i.id AS irr_id, i.nome, i.motori_std, i.zona, i.minuti_distanza, i.extra_fosso_sporco, i.giorni_anticipo_manovra,
            p.data_ora_inizio, p.data_ora_fine, p.config_scelta
@@ -246,9 +255,9 @@ df_tutti_attivi = pd.read_sql_query('''
     LEFT JOIN irriganti i ON p.irrigante_id = i.id
     WHERE p.stato = 'PROGRAMMATO' AND i.id IS NOT NULL
     ORDER BY p.data_ora_inizio ASC
-''', conn)
-conn.close()
+''', engine)
 
+# Isolamento di stringhe datetime invalide tramite Regex prima di pd.to_datetime per bloccare crash all'origine
 if not df_tutti_attivi.empty:
     maschera_valida = df_tutti_attivi['data_ora_inizio'].str.match(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$') & \
                       df_tutti_attivi['data_ora_fine'].str.match(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$')
@@ -261,6 +270,7 @@ if not df_tutti_attivi.empty:
 if 'data_corrente' not in st.session_state:
     st.session_state.data_corrente = datetime.now().date()
 
+# Sincronizzazione automatica tra tab per eliminare i "rerun infiniti"
 if "data_settimana_macchine" not in st.session_state:
     st.session_state.data_settimana_macchine = st.session_state.data_corrente
 
@@ -292,7 +302,7 @@ if not df_tutti_attivi.empty:
 
 motori_pre_perdite_global = df_tutti_attivi[(df_tutti_attivi['data_inizio_dt'].dt.date <= st.session_state.data_corrente) & (df_tutti_attivi['data_fine_dt'].dt.date >= st.session_state.data_corrente)]['motori_std'].sum() if not df_tutti_attivi.empty else 0.0
 motori_giorno_global = (motori_pre_perdite_global + 0.5) if motori_pre_perdite_global > 0 else 0.0
-testo_pompe_g, _ = selezionia_pompe_centrale(motori_giorno_global)
+testo_pompe_g, _ = seleziona_pompe_centrale(motori_giorno_global)
 esito_colore_g, _ = ottieni_colore_stato_semplice(motori_giorno_global, rangoni_oggi_global)
 _, portata_globale_g_ls = calcola_giri_chiavone(motori_giorno_global, "Generico")
 
@@ -313,13 +323,6 @@ with tab_home:
         <p style="color:white; margin:0; font-size:16px; font-weight:500;">ASSETTO IMPIANTO: {testo_pompe_g} | PORTATA COMPLESSIVA RETE: {portata_globale_g_ls:.0f} l/s</p>
     </div>
     """, unsafe_allow_html=True)
-
-    if 0 < motori_giorno_global <= 5.0 and not df_giorno_attivi_global.empty:
-        ha_contrappesi = df_giorno_attivi_global['nome'].str.contains("Valvola Contrappesi", case=False).any()
-        if not ha_contrappesi:
-            carico_reale_senza_perdite = motori_pre_perdite_global
-            if carico_reale_senza_perdite < 2.5:
-                st.error("⚠️ **ALLARME DI SICUREZZA RETE (P4 SOLA)**: La Valvola Contrappesi è CHIUSA e il carico attuale è inferiorie alla soglia di sicurezza per mantenere la pressione sotto i 2 bar. **Aprire immediatamente almeno 2.5 - 3 motori**, preferibilmente su: *Rangoni, Vaccara o Dogaro di Ravarino*.")
     
     c_h1, c_h2, c_h3 = st.columns([1, 2, 1])
     with c_h1: st.button("⬅️ Giorno Precedente", on_click=giorno_precedente, use_container_width=True, key="home_prev")
@@ -341,14 +344,13 @@ with tab_home:
         colore_loop, _ = ottieni_colore_stato_semplice(motori_loop, rangoni_loop)
         
         with col_sett[i]:
-            if st.button(f"{nome_giorno_it} {giorno_loop.strftime('%d/%m')}", key=f"btn_giorno_{giorno_loop.strftime('%Y%m%d')}", use_container_width=True):
+            if st.button(f"{nome_giorno_it} {giorno_loop.strftime('%d/%m')} ({motori_loop:.1f} M)", key=f"btn_giorno_{giorno_loop.strftime('%Y%m%d')}", use_container_width=True):
                 st.session_state.data_corrente = giorno_loop
                 st.session_state.data_settimana_macchine = giorno_loop
                 st.rerun()
             
             bordo_giorno = "border: 3px solid #17a2b8;" if giorno_loop == st.session_state.data_corrente else "border: 1px solid rgba(0,0,0,0.1);"
-            colore_testo = "black" if (motori_loop > 11.0 and motori_loop <= 12.0 and not rangoni_loop) else "white"
-            st.markdown(f'<div style="background-color:{colore_loop}; padding:6px; border-radius:5px; text-align:center; color:{colore_testo}; font-weight:bold; margin-bottom:8px; {bordo_giorno}"><div style="font-size:14px;">{motori_loop:.1f} M</div></div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="background-color:{colore_loop}; padding:6px; border-radius:5px; text-align:center; color:white; font-weight:bold; margin-bottom:8px; {bordo_giorno}"><div style="font-size:14px;">{motori_loop:.1f} M</div></div>', unsafe_allow_html=True)
             
             if df_loop_attivi.empty:
                 st.markdown("<div style='text-align:center; color:#888; font-size:12px;'>Centrale Off</div>", unsafe_allow_html=True)
@@ -395,7 +397,7 @@ with tab_dashboard:
     
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, zona, tipo_prelievo, motori_std FROM irriganti WHERE nome = ?", (irrigante_scelto,))
+    cursor.execute("SELECT id, zona, tipo_prelievo, motori_std FROM irriganti WHERE nome = %s", (irrigante_scelto,))
     riga_esistente = cursor.fetchone()
     conn.close()
 
@@ -489,23 +491,17 @@ with tab_dashboard:
 
     motori_pre_perdite = df_giorno_attivi['motori_std'].sum() if not df_giorno_attivi.empty else 0.0
     motori_giorno = (motori_pre_perdite + 0.5) if motori_pre_perdite > 0 else 0.0
-    testo_pompe, _ = selezionia_pompe_centrale(motori_giorno)
+    testo_pompe, _ = seleziona_pompe_centrale(motori_giorno)
     esito_colore, _ = ottieni_colore_stato_semplice(motori_giorno, rangoni_oggi)
     _, portata_globale_ls = calcola_giri_chiavone(motori_giorno, "Generico")
 
-    colore_testo_dash = "black" if (motori_giorno > 11.0 and motori_giorno <= 12.0 and not rangoni_oggi) else "white"
     st.markdown(f"""
     <div style="background-color:{esito_colore}; padding:20px; border-radius:10px; text-align:center; margin-bottom:25px;">
-        <h2 style="color:{colore_testo_dash}; margin:0;">📟 STATO IDRAULICO RETE DEL GIORNO: {st.session_state.data_corrente.strftime('%d/%m/%Y')}</h2>
-        <h1 style="color:{colore_testo_dash}; margin:10px 0 0 0; font-size:45px; font-weight:bold;">{motori_giorno:.2f} M totali impegnati <span style='font-size:20px; font-weight:normal;'>(Incluso +0.50 M perdite)</span></h1>
-        <p style="color:{colore_testo_dash}; margin:5px 0 0 0; font-size:18px; font-weight:500;">ASSETTO CENTRALINA: {testo_pompe} | PORTATA RETE: {portata_globale_ls:.0f} l/s</p>
+        <h2 style="color:white; margin:0;">📟 STATO IDRAULICO RETE DEL GIORNO: {st.session_state.data_corrente.strftime('%d/%m/%Y')}</h2>
+        <h1 style="color:white; margin:10px 0 0 0; font-size:45px; font-weight:bold;">{motori_giorno:.2f} M totali impegnati <span style='font-size:20px; font-weight:normal;'>(Incluso +0.50 M perdite)</span></h1>
+        <p style="color:white; margin:5px 0 0 0; font-size:18px; font-weight:500;">ASSETTO CENTRALINA: {testo_pompe} | PORTATA RETE: {portata_globale_ls:.0f} l/s</p>
     </div>
     """, unsafe_allow_html=True)
-
-    if 0 < motori_giorno <= 5.0 and not df_giorno_attivi.empty:
-        ha_contrappesi = df_giorno_attivi['nome'].str.contains("Valvola Contrappesi", case=False).any()
-        if not ha_contrappesi and motori_pre_perdite < 2.5:
-            st.error("⚠️ **ALLARME DI SICUREZZA RETE (P4 SOLA)**: La Valvola Contrappesi è CHIUSA e il carico attuale è inferiore alla soglia di sicurezza per mantenere la pressione sotto i 2 bar. **Aprire immediatamente almeno 2.5 - 3 motori**, preferibilmente su: *Rangoni, Vaccara o Dogaro di Ravarino*.")
 
     st.subheader(f"📋 Dettaglio Utenze Attive Giornaliere ({st.session_state.data_corrente.strftime('%d/%m/%Y')})")
     if df_giorno_attivi.empty:
@@ -550,9 +546,7 @@ with tab_agenda:
         st.info("Nessuna manovra presente nel sistema.")
     else:
         manovre_totali = []
-        conn = get_db_connection()
-        df_manovre_p = pd.read_sql_query("SELECT * FROM manovre_personalizzate", conn)
-        conn.close()
+        df_manovre_p = pd.read_sql_query("SELECT * FROM manovre_personalizzate", engine)
 
         for idx, row in df_tutti_attivi.iterrows():
             in_dt = row['data_inizio_dt']
@@ -611,11 +605,11 @@ with tab_agenda:
             st.info("Nessuna manovra fisica pianificata o configurata in anagrafica per oggi.")
 
 # =========================================================
-# TAB 3: VIDEATA SALA MACCHINE (TIMER SETTIMANALE SLITTATO)
+# TAB 3: VIDEATA SALA MACCHINE (TIMER SETTIMANALE BLINDATO)
 # =========================================================
 with tab_sala_macchine:
     st.title("📟 Quadro Controllo Automatizzato Orologi di Centrale")
-    st.write("La sezione mostra esclusivamente gli intervalli di accensione e spegnimento operativi delle pompe P3 e P4. Gli orari di avvio della P3 incorporano automaticamente i minuti di fermo macchina necessari quando si spegne la P4.")
+    st.write("La sezione mostra esclusivamente gli intervalli di accensione e spegnimento operativi delle pompe P3 e P4 calcolati in base al carico totale di motori richiesto in ogni istante del giorno.")
     
     c_sm1, c_sm2, c_sm3 = st.columns([1, 2, 1])
     with c_sm1:
@@ -647,7 +641,6 @@ with tab_sala_macchine:
             
         p4_attiva = [False] * 96
         p3_attiva = [False] * 96
-        motori_slot = [0.0] * 96
         
         for quarto in range(96):
             ora = quarto // 4
@@ -667,18 +660,16 @@ with tab_sala_macchine:
             
             if motori_quarto > 0:
                 totale_con_perdite = motori_quarto + 0.5
-                motori_slot[quarto] = totale_con_perdite
                 
-                if totale_con_perdite <= 5.0:
+                if totale_con_perdite <= 6.0:
                     p4_attiva[quarto] = True
-                elif totale_con_perdite <= 10.0:
+                elif totale_con_perdite <= 8.0:
                     p3_attiva[quarto] = True
                 else:
                     p4_attiva[quarto] = True
                     p3_attiva[quarto] = True
 
-        # MODIFICATO PUNTO 3: Unione delle fasce incorporando direttamente i minuti reali di ritardo
-        def unisci_fasce_orarie_con_ritardi_reali(array_presenza, array_p4_precedente, array_carichi):
+        def unisci_fasce_orarie(array_presenza):
             fasce = []
             in_blocco = False
             inizio_blocco = None
@@ -688,22 +679,7 @@ with tab_sala_macchine:
                     in_blocco = True
                     h_ini = q // 4
                     m_ini = (q % 4) * 15
-                    
-                    # Controllo transizione P4 -> P3 (senza che vadano in parallelo precedentemente)
-                    if array_p4_precedente is not None and q > 0:
-                        p4_era_attiva = array_p4_precedente[q-1] and not array_presenza[q-1]
-                        p4_ora_spenta = not array_p4_precedente[q]
-                        if p4_era_attiva and p4_ora_spenta:
-                            carico_att = array_carichi[q]
-                            ritardo = 4 if (5.0 < carico_att <= 7.0) else 3
-                            # Slittamento dei minuti effettivi sul blocco orario
-                            m_slittato = m_ini + ritardo
-                            inizio_blocco = f"{h_ini:02d}:{m_slittato:02d}"
-                        else:
-                            inizio_blocco = f"{h_ini:02d}:{m_ini:02d}"
-                    else:
-                        inizio_blocco = f"{h_ini:02d}:{m_ini:02d}"
-                        
+                    inizio_blocco = f"{h_ini:02d}:{m_ini:02d}"
                 elif not array_presenza[q] and in_blocco:
                     in_blocco = False
                     h_fin = q // 4
@@ -714,15 +690,15 @@ with tab_sala_macchine:
                 fasce.append(f"⏱️ {inizio_blocco} — 24:00")
             return fasce
 
-        fasce_p4 = unisci_fasce_orarie_con_ritardi_reali(p4_attiva, None, motori_slot)
-        fasce_p3 = unisci_fasce_orarie_con_ritardi_reali(p3_attiva, p4_attiva, motori_slot)
+        fasce_p4 = unisci_fasce_orarie(p4_attiva)
+        fasce_p3 = unisci_fasce_orarie(p3_attiva)
 
         col_p4_sm, col_p3_sm = st.columns(2)
         with col_p4_sm:
             st.markdown("<b style='color:#dc3545;'>📟 ORARI ACCENSIONE POMPA P4 (Bassa Pressione)</b>", unsafe_allow_html=True)
             if fasce_p4:
                 for idx_f, fascia_oraria_testo in enumerate(fasce_p4): 
-                    st.code(fascia_oraria_testo, language="text")
+                    st.code(fascia_oraria_testo, language="text", key=f"code_p4_{giorno_idx}_{idx_f}")
             else:
                 st.caption("Pompa P4 Spenta per l'intera giornata")
                 
@@ -730,7 +706,7 @@ with tab_sala_macchine:
             st.markdown("<b style='color:#17a2b8;'>📟 ORARI ACCENSIONE POMPA P3 (Alta Pressione / Inverter)</b>", unsafe_allow_html=True)
             if fasce_p3:
                 for idx_f, fascia_oraria_testo in enumerate(fasce_p3): 
-                    st.code(fascia_oraria_testo, language="text")
+                    st.code(fascia_oraria_testo, language="text", key=f"code_p3_{giorno_idx}_{idx_f}")
             else:
                 st.caption("Pompa P3 Spenta per l'intera giornata")
 
@@ -848,9 +824,7 @@ with tab_anagrafica:
                         st.success("Manovra aggiunta!")
                         st.rerun()
 
-            conn = get_db_connection()
-            df_m_salvate = pd.read_sql_query("SELECT * FROM manovre_personalizzate WHERE irrigante_id = ?", conn, params=[id_selezionato])
-            conn.close()
+            df_m_salvate = pd.read_sql_query("SELECT * FROM manovre_personalizzate WHERE irrigante_id = %s", engine, params=[id_selezionato])
 
             if not df_m_salvate.empty:
                 st.caption("Manovre registrate attive per questo profilo:")
