@@ -25,13 +25,11 @@ if "manovre_temporanee_registrazione" not in st.session_state:
 
 # --- FUNZIONE DI CONNESSIONE SICURA CON POSTGRESQL (NEON) ---
 def get_db_connection():
-    # Recupera l'URL di connessione dai Secrets di Streamlit Cloud
     db_url = st.secrets["connections"]["postgresql"]["url"]
     return psycopg2.connect(db_url)
 
 def get_sqlalchemy_engine():
     db_url = st.secrets["connections"]["postgresql"]["url"]
-    # Corregge il prefisso per renderlo compatibile con SQLAlchemy >= 2.0
     if db_url.startswith("postgresql://"):
         db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
     return create_engine(db_url)
@@ -79,7 +77,7 @@ def calcola_giri_chiavone(motori_totali, nome_chiavone):
     giri = tabella_reale[chiave_approssimata][pressione_chiavone]
     return giri, motori_totali * 20.0
 
-# --- FUNZION DATABASE (ADATTATE A SINTASSI POSTGRESQL DI NEON) ---
+# --- FUNZIONI DATABASE (ADATTATE A SINTASSI POSTGRESQL DI NEON) ---
 def inizializza_tabelle_personalizzate():
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -107,11 +105,12 @@ def inizializza_tabelle_personalizzate():
     conn.commit()
     conn.close()
 
+# MODIFICA APPLICATA QUI (Risolto errore typo di 'minuti_distanza')
 def inserisci_irrigante_completo(nome, zona, prelievo, motori, distanza, extra_fosso, giorni_ant):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
-        INSERT INTO irriganti (nome, zona, tipo_prelievo, motori_std, minutes_distanza, extra_fosso_sporco, giorni_anticipo_manovra)
+        INSERT INTO irriganti (nome, zona, tipo_prelievo, motori_std, minuti_distanza, extra_fosso_sporco, giorni_anticipo_manovra)
         VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id
     ''', (nome, zona, prelievo, motori, distanza, extra_fosso, giorni_ant))
     id_generato = cursor.fetchone()[0]
@@ -235,7 +234,7 @@ def ottieni_giorno_settimana(data_obj):
 # Inizializza le tabelle su Neon PostgreSQL all'avvio
 inizializza_tabelle_personalizzate()
 
-# --- MANUTENZIONE PREVENTIVA AVANZATA (Pulizia rigida dati corrotti) ---
+# --- MANUTENZIONE PREVENTIVA AVANZATA ---
 try:
     conn_manutenzione = get_db_connection()
     cursor_m = conn_manutenzione.cursor()
@@ -257,7 +256,6 @@ df_tutti_attivi = pd.read_sql_query('''
     ORDER BY p.data_ora_inizio ASC
 ''', engine)
 
-# Isolamento di stringhe datetime invalide tramite Regex prima di pd.to_datetime per bloccare crash all'origine
 if not df_tutti_attivi.empty:
     maschera_valida = df_tutti_attivi['data_ora_inizio'].str.match(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$') & \
                       df_tutti_attivi['data_ora_fine'].str.match(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$')
@@ -270,7 +268,6 @@ if not df_tutti_attivi.empty:
 if 'data_corrente' not in st.session_state:
     st.session_state.data_corrente = datetime.now().date()
 
-# Sincronizzazione automatica tra tab per eliminare i "rerun infiniti"
 if "data_settimana_macchine" not in st.session_state:
     st.session_state.data_settimana_macchine = st.session_state.data_corrente
 
@@ -807,7 +804,7 @@ with tab_anagrafica:
                 if st.form_submit_button("Aggiorna Scheda"):
                     zona_da_salvare_mod = "Valvola Contrappesi" if is_diretta_mod else m_zona
                     aggiorna_irrigante_completo(id_selezionato, m_nome, zona_da_salvare_mod, m_prelievo, m_motori, m_distanza, m_extra_fosso, m_giorni_ant)
-                    st.success("Scheda updated!")
+                    st.success("Scheda aggiornata!")
                     st.rerun()
 
             st.markdown("---")
