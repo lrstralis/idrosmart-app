@@ -28,30 +28,11 @@ def get_db_connection():
     db_url = st.secrets["connections"]["postgresql"]["url"]
     return psycopg2.connect(db_url)
 
-@st.cache_resource
 def get_sqlalchemy_engine():
     db_url = st.secrets["connections"]["postgresql"]["url"]
     if db_url.startswith("postgresql://"):
         db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
     return create_engine(db_url)
-
-# --- FUNZIONI DI CARICAMENTO DATI CON CACHE OTTIMIZZATA ---
-@st.cache_data(ttl=60)
-def carica_dati_anagrafica():
-    engine = get_sqlalchemy_engine()
-    return pd.read_sql_query(text("SELECT * FROM irriganti ORDER BY nome"), engine)
-
-@st.cache_data(ttl=10)
-def carica_tutti_i_turni():
-    engine = get_sqlalchemy_engine()
-    return pd.read_sql_query(text('''
-        SELECT p.id, i.id AS irr_id, i.nome, i.motori_std, i.zona, i.minuti_distanza, i.extra_fosso_sporco, i.giorni_anticipo_manovra,
-               p.data_ora_inizio, p.data_ora_fine, p.config_scelta
-        FROM prenotazioni p 
-        LEFT JOIN irriganti i ON p.irrigante_id = i.id
-        WHERE p.stato = 'PROGRAMMATO' AND i.id IS NOT NULL
-        ORDER BY p.data_ora_inizio ASC
-    '''), engine)
 
 # --- FUNZIONE DI CALCOLO GIRI CHIAVONE BASATA SULLA TABELLA UNIFICATA ---
 def calcola_giri_chiavone(motori_totali, nome_chiavone):
@@ -262,9 +243,17 @@ try:
 except Exception:
     pass
 
-# --- CARICAMENTO DATI ---
-df_irriganti = carica_dati_anagrafica()
-df_tutti_attivi = carica_tutti_i_turni()
+# --- CARICAMENTO E SANITIZZAZIONE RIGIDA DEI DATI ---
+engine = get_sqlalchemy_engine()
+df_irriganti = pd.read_sql_query(text("SELECT * FROM irriganti ORDER BY nome"), engine)
+df_tutti_attivi = pd.read_sql_query(text('''
+    SELECT p.id, i.id AS irr_id, i.nome, i.motori_std, i.zona, i.minuti_distanza, i.extra_fosso_sporco, i.giorni_anticipo_manovra,
+           p.data_ora_inizio, p.data_ora_fine, p.config_scelta
+    FROM prenotazioni p 
+    LEFT JOIN irriganti i ON p.irrigante_id = i.id
+    WHERE p.stato = 'PROGRAMMATO' AND i.id IS NOT NULL
+    ORDER BY p.data_ora_inizio ASC
+'''), engine)
 
 # --- BLOCCO PER LA CONVERSIONE DATE ---
 if not df_tutti_attivi.empty:
@@ -467,7 +456,6 @@ with tab_dashboard:
                 fine_completo = f"{d_fin.strftime('%Y-%m-%d')} {salva_ora_fine}"
                 inserisci_prenotazione_avanzata(id_irrigante_db, inizio_completo, fine_completo, config_salv)
                 
-            st.cache_data.clear()
             st.sidebar.success("Turni registrati correttamente!")
             st.rerun()
 
@@ -485,7 +473,6 @@ with tab_dashboard:
                     cancella_turni_mese(st.session_state.data_corrente)
                 elif opzione_canc_massa == "Tutti i turni in generale":
                     cancella_turni_generale()
-                st.cache_data.clear()
                 st.rerun()
 
     c_nav1, c_nav2, c_nav3 = st.columns([1, 2, 1])
@@ -534,7 +521,6 @@ with tab_dashboard:
             with c_del2:
                 if st.button("🗑️ Rimuovi", key=f"del_dash_{r['id']}", use_container_width=True):
                     cancella_prenotazione(int(r['id']))
-                    st.cache_data.clear()
                     st.rerun()
 
 # =========================================================
@@ -783,7 +769,6 @@ with tab_anagrafica:
                     inserisci_manovra_personalizzata(nuovo_id, m_salvare['descrizione'], m_salvare['valore'], m_salvare['unita'])
                 
                 st.session_state.manovre_temporanee_registrazione = []
-                st.cache_data.clear()
                 st.success("Profilo salvato correttamente!")
                 st.rerun()
 
@@ -816,7 +801,6 @@ with tab_anagrafica:
                 if st.form_submit_button("Aggiorna Scheda"):
                     zona_da_salvare_mod = "Valvola Contrappesi" if is_diretta_mod else m_zona
                     aggiorna_irrigante_completo(id_selezionato, m_nome, zona_da_salvare_mod, m_prelievo, m_motori, m_distanza, m_extra_fosso, m_giorni_ant)
-                    st.cache_data.clear()
                     st.success("Scheda aggiornata!")
                     st.rerun()
 
@@ -831,8 +815,7 @@ with tab_anagrafica:
                 if st.form_submit_button("➕ Aggiungi Manovra a questo Profilo"):
                     if desc_manovra:
                         inserisci_manovra_personalizzata(id_selezionato, desc_manovra, val_manovra, unita_manovra)
-                        st.cache_data.clear()
-                        st.success("Manovra aggiunto!")
+                        st.success("Manovra aggiunta!")
                         st.rerun()
 
             df_m_salvate = pd.read_sql_query(
@@ -849,7 +832,6 @@ with tab_anagrafica:
                     with c_v2: 
                         if st.button("🗑️ Rimuovi", key=f"del_man_{m_salv['id']}", use_container_width=True):
                             cancella_manovra_personalizzata(int(m_salv['id']))
-                            st.cache_data.clear()
                             st.rerun()
 
     with sub_vis:
