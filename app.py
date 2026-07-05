@@ -80,6 +80,34 @@ def calcola_motori_con_perdite(motori_nominali):
         return motori_nominali + 0.5
     return motori_nominali + 1.0
 
+# --- FUNZIONE NUOVA PER TROVARE IL PICCO MASSIMO SOVRAPPOSTO MINUTO PER MINUTO ---
+def calcola_picco_massimo_giorno(df_giorno, data_rif):
+    if df_giorno.empty:
+        return 0.0
+    motori_minuto = [0.0] * 1440
+    for _, turno in df_giorno.iterrows():
+        m_std = float(turno['motori_std'])
+        dt_ini = turno['data_inizio_dt']
+        dt_fin = turno['data_fine_dt']
+        
+        if dt_ini.date() < data_rif:
+            min_ini = 0
+        else:
+            min_ini = dt_ini.hour * 60 + dt_ini.minute
+            
+        if dt_fin.date() > data_rif:
+            min_fin = 1440
+        else:
+            min_fin = dt_fin.hour * 60 + dt_fin.minute
+            if dt_fin.time() == time(23, 59):
+                min_fin = 1440
+                
+        for m in range(min_ini, min_fin):
+            if 0 <= m < 1440:
+                motori_minuto[m] += m_std
+                
+    return max(motori_minuto)
+
 # --- FUNZIONE PER GENERARE LE FASCE ORARIE DEL TOTALE MOTORI AL MINUTO ---
 def calcola_fasce_sovrapposte_giorno(df_giorno, data_rif):
     motori_minuto = [0.0] * 1440
@@ -164,7 +192,6 @@ def inizializza_tabelle_personalizzate():
     conn.commit()
     conn.close()
 
-# --- FIXED: 'minuti_distanza' invece del typo errato 'minutes_distanza' ---
 def inserisci_irrigante_completo(nome, zona, prelievo, motori, distanza, extra_fosso, giorni_ant):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -366,7 +393,9 @@ if not df_tutti_attivi.empty:
             
         irriganti_giorno_corrente.append({"id": r['id'], "nome": r['nome'], "fascia": f"{ora_inz_str} - {ora_fin_str}", "motori": r['motori_std']})
 
-motori_pre_perdite_global = df_tutti_attivi[(df_tutti_attivi['data_inizio_dt'].dt.date <= st.session_state.data_corrente) & (df_tutti_attivi['data_fine_dt'].dt.date >= st.session_state.data_corrente)]['motori_std'].sum() if not df_tutti_attivi.empty else 0.0
+# --- MODIFICATO: Calcolo dello stato idraulico corrente in base al Picco Massimo Sovrapposto ---
+df_giorno_attuale_global = df_tutti_attivi[(df_tutti_attivi['data_inizio_dt'].dt.date <= st.session_state.data_corrente) & (df_tutti_attivi['data_fine_dt'].dt.date >= st.session_state.data_corrente)].copy() if not df_tutti_attivi.empty else pd.DataFrame()
+motori_pre_perdite_global = calcola_picco_massimo_giorno(df_giorno_attuale_global, st.session_state.data_corrente)
 motori_giorno_global = calcola_motori_con_perdite(motori_pre_perdite_global)
 testo_pompe_g, _ = selezionao_pompe_centrale(motori_giorno_global)
 esito_colore_g, _ = ottieni_colore_stato_semplice(motori_giorno_global, rangoni_oggi_global)
@@ -385,9 +414,9 @@ with tab_home:
     valore_perdite_testo = "0.00" if motori_pre_perdite_global == 0 else ("0.50" if motori_giorno_global <= 6.0 else "1.00")
     st.markdown(f"""
     <div style="background-color:{esito_colore_g}; padding:18px; border-radius:10px; text-align:center; margin-bottom:20px;">
-        <h3 style="color:white; margin:0; font-size:1.3rem;">📟 STATO IDRAULICO CORRENTE: {st.session_state.data_corrente.strftime('%d/%m/%Y')}</h3>
-        <h1 style="color:white; margin:5px 0; font-size:38px; font-weight:bold;">{motori_giorno_global:.2f} M totali impegnati <span style='font-size:18px; font-weight:normal;'>(Incluso +{valore_perdite_testo} M perdite)</span></h1>
-        <p style="color:white; margin:0; font-size:16px; font-weight:500;">ASSETTO IMPIANTO: {testo_pompe_g} | PORTATA COMPLESSIVA RETE: {portata_globale_g_ls:.0f} l/s</p>
+        <h3 style="color:white; margin:0; font-size:1.3rem;">📟 STATO IDRAULICO CORRENTE (PICCO DI MASSIMA SOVRAPPOSIZIONE): {st.session_state.data_corrente.strftime('%d/%m/%Y')}</h3>
+        <h1 style="color:white; margin:5px 0; font-size:38px; font-weight:bold;">{motori_giorno_global:.2f} M massimi in contemporanea <span style='font-size:18px; font-weight:normal;'>(Incluso +{valore_perdite_testo} M perdite)</span></h1>
+        <p style="color:white; margin:0; font-size:16px; font-weight:500;">ASSETTO MASSIMO PICCO: {testo_pompe_g} | PORTATA COMPLESSIVA RETE AL PICCO: {portata_globale_g_ls:.0f} l/s</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -405,7 +434,8 @@ with tab_home:
         nome_giorno_it = GIORNI_IT.get(giorno_loop.strftime("%A"), giorno_loop.strftime("%A"))
         df_loop_attivi = df_tutti_attivi[(df_tutti_attivi['data_inizio_dt'].dt.date <= giorno_loop) & (df_tutti_attivi['data_fine_dt'].dt.date >= giorno_loop)] if not df_tutti_attivi.empty else pd.DataFrame()
         
-        motori_loop_pre = df_loop_attivi['motori_std'].sum() if not df_loop_attivi.empty else 0.0
+        # --- MODIFICATO: Anche la griglia settimanale mostra il picco massimo di motori sovrapposti nel singolo giorno ---
+        motori_loop_pre = calcola_picco_massimo_giorno(df_loop_attivi, giorno_loop)
         motori_loop = calcola_motori_con_perdite(motori_loop_pre)
         rangoni_loop = df_loop_attivi['nome'].str.contains("Rangoni", case=False).any() if not df_loop_attivi.empty else False
         colore_loop, _ = ottieni_colore_stato_semplice(motori_loop, rangoni_loop)
@@ -596,7 +626,8 @@ with tab_dashboard:
     df_giorno_attivi = df_tutti_attivi[(df_tutti_attivi['data_inizio_dt'].dt.date <= st.session_state.data_corrente) & (df_tutti_attivi['data_fine_dt'].dt.date >= st.session_state.data_corrente)].copy() if not df_tutti_attivi.empty else pd.DataFrame()
     rangoni_oggi = df_giorno_attivi['nome'].str.contains("Rangoni", case=False).any() if not df_giorno_attivi.empty else False
 
-    motori_pre_perdite = df_giorno_attivi['motori_std'].sum() if not df_giorno_attivi.empty else 0.0
+    # --- MODIFICATO: Calcolo basato sul picco massimo anche nella dashboard ---
+    motori_pre_perdite = calcola_picco_massimo_giorno(df_giorno_attivi, st.session_state.data_corrente)
     motori_giorno = calcola_motori_con_perdite(motori_pre_perdite)
     testo_pompe, _ = selezionao_pompe_centrale(motori_giorno)
     esito_colore, _ = ottieni_colore_stato_semplice(motori_giorno, rangoni_oggi)
@@ -605,9 +636,9 @@ with tab_dashboard:
     valore_perdite_testo_dash = "0.00" if motori_pre_perdite == 0 else ("0.50" if motori_giorno <= 6.0 else "1.00")
     st.markdown(f"""
     <div style="background-color:{esito_colore}; padding:20px; border-radius:10px; text-align:center; margin-bottom:25px;">
-        <h2 style="color:white; margin:0;">📟 STATO IDRAULICO RETE DEL GIORNO: {st.session_state.data_corrente.strftime('%d/%m/%Y')}</h2>
-        <h1 style="color:white; margin:10px 0 0 0; font-size:45px; font-weight:bold;">{motori_giorno:.2f} M totali impegnati <span style='font-size:20px; font-weight:normal;'>(Incluso +{valore_perdite_testo_dash} M perdite)</span></h1>
-        <p style="color:white; margin:5px 0 0 0; font-size:18px; font-weight:500;">ASSETTO CENTRALINA: {testo_pompe} | PORTATA RETE: {portata_globale_ls:.0f} l/s</p>
+        <h2 style="color:white; margin:0;">📟 STATO IDRAULICO RETE DEL GIORNO (PICCO MASSIMO): {st.session_state.data_corrente.strftime('%d/%m/%Y')}</h2>
+        <h1 style="color:white; margin:10px 0 0 0; font-size:45px; font-weight:bold;">{motori_giorno:.2f} M massimi in contemporanea <span style='font-size:20px; font-weight:normal;'>(Incluso +{valore_perdite_testo_dash} M perdite)</span></h1>
+        <p style="color:white; margin:5px 0 0 0; font-size:18px; font-weight:500;">ASSETTO MASSIMO PICCO: {testo_pompe} | PORTATA RETE AL PICCO: {portata_globale_ls:.0f} l/s</p>
     </div>
     """, unsafe_allow_html=True)
 
