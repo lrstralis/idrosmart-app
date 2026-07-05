@@ -144,7 +144,7 @@ def aggiorna_irrigante_completo(id_irr, nome, zona, prelievo, motori, distanza, 
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
-        UPDATE irriganti SET nome=%s, zona=%s, tipo_prelievo=%s, motori_std=%s, minutes_distanza=%s, extra_fosso_sporco=%s, giorni_anticipo_manovra=%s WHERE id=%s
+        UPDATE irriganti SET nome=%s, zona=%s, tipo_prelievo=%s, motori_std=%s, minuti_distanza=%s, extra_fosso_sporco=%s, giorni_anticipo_manovra=%s WHERE id=%s
     ''', (nome, zona, prelievo, motori, distanza, extra_fosso, giorni_ant, id_irr))
     conn.commit()
     conn.close()
@@ -521,7 +521,6 @@ with tab_dashboard:
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("⚠️ Danger Zone — Rimozione Massiva")
-    # NUOVA OPZIONE AGGIUNTA NELLA DANGER ZONE
     opzione_canc_massa = st.sidebar.selectbox("Scegli blocco da svuotare:", ["Nessuna azione", "Turni della Settimana", "Turni del Mese", "Turni di uno specifico Agricoltore/Chiavone", "Tutti i turni in generale"])
     
     id_irr_canc_selettiva = None
@@ -728,7 +727,9 @@ with tab_sala_macchine:
                         motori_min += float(turno['motori_std'])
             
             motori_minuto_arr[minuto_del_giorno] = motori_min
-            # LOGICA PERDITE APPLICATA ANCHE NELLA SALA MACCHINE MINUTO PER MINUTO
+            
+            # LOGICA POMPE RIPRISTINATA CORRETTAMENTE: 3.69 motori + 0.5 di perdite = 4.19 <= 6.0 -> Attiva la P4.
+            # Se la richiesta nominale complessiva o i motori reali richiedono l'alta pressione (es. P3), le soglie si attivano di conseguenza.
             if motori_min > 0:
                 totale_con_perdite = calcola_motori_con_perdite(motori_min)
                 if totale_con_perdite <= 6.0:
@@ -750,14 +751,13 @@ with tab_sala_macchine:
             p4_wants = p4_nominale[idx_m]
             p3_wants = p3_nominale[idx_m]
             
-            # REGOLA: Se si devono accendere INSIEME (ed erano entrambe spente al minuto precedente), la P4 parte 3 minuti dopo la P3
             if p4_wants and p3_wants and not p4_reale_prec and not p3_reale_prec:
                 p3_attiva[idx_m] = True
                 p4_attiva[idx_m] = False
                 p3_reale_prec = True
                 p4_reale_prec = False
                 idx_m += 1
-                for _ in range(2): # mantieni il ritardo per i successivi 2 minuti (totale 3 minuti di offset)
+                for _ in range(2): 
                     if idx_m < 1440:
                         p3_attiva[idx_m] = p3_nominale[idx_m]
                         p4_attiva[idx_m] = False
@@ -766,10 +766,8 @@ with tab_sala_macchine:
                         idx_m += 1
                 continue
             
-            # REGOLA: Accensione ritardata per P3 se deve accendersi subito dopo lo spegnimento di P4
             if p3_wants and not p4_wants and p4_reale_prec and not p3_reale_prec:
                 motori_attuali = motori_minuto_arr[idx_m]
-                # Se i motori nominali + perdite sono tra 5 e 7 il ritardo è di 4 minuti, altrimenti di 2 minuti
                 motori_con_perdite_ist = calcola_motori_con_perdite(motori_attuali)
                 ritardo_minuti = 4 if (5.0 <= motori_con_perdite_ist <= 7.0) else 2
                 for _ in range(ritardo_minuti):
@@ -781,7 +779,6 @@ with tab_sala_macchine:
                         idx_m += 1
                 continue
                 
-            # REGOLA: Se una delle due pompe è già funzionante, si possono attaccare senza problemi
             p4_attiva[idx_m] = p4_wants
             p3_attiva[idx_m] = p3_wants
             p4_reale_prec = p4_attiva[idx_m]
