@@ -56,7 +56,7 @@ def calcola_giri_chiavone(motori_totali, nome_chiavone):
         "3.34": {"giri": 4.75, "portata": 70.0}, "3.69": {"giri": 5.00, "portata": 77.0},
         "4.03": {"giri": 5.25, "portata": 85.0}, "4.38": {"giri": 5.50, "portata": 92.0},
         "4.73": {"giri": 5.75, "portata": 99.0}, "5.07": {"giri": 6.00, "portata": 107.0},
-        "5.41": {"giri": 6.25, "portata": 114.0}, "5.75": {"giri": 6.50, "portata": 121.0},
+        "5.41": {"giri": 6.25, "portata": 114.0}, "5.75": {"giri": 6.50, "row_p": 121.0},
         "6.08": {"giri": 6.75, "portata": 128.0}, "6.40": {"giri": 7.00, "portata": 134.0},
         "6.71": {"giri": 7.25, "portata": 141.0}, "7.01": {"giri": 7.50, "portata": 147.0},
         "7.29": {"giri": 7.75, "portata": 153.0}, "7.57": {"giri": 8.00, "portata": 159.0}
@@ -91,7 +91,6 @@ def calcola_fasce_sovrapposte_giorno(df_giorno, data_rif):
         dt_ini = turno['data_inizio_dt']
         dt_fin = turno['data_fine_dt']
         
-        # Troviamo i minuti di inizio e fine relativi alla giornata esaminata
         if dt_ini.date() < data_rif:
             min_ini = 0
         else:
@@ -169,7 +168,7 @@ def inserisci_irrigante_completo(nome, zona, prelievo, motori, distanza, extra_f
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
-        INSERT INTO irriganti (nome, zona, tipo_prelievo, motori_std, minuti_distanza, extra_fosso_sporco, giorni_anticipo_manovra)
+        INSERT INTO irriganti (nome, zona, tipo_prelievo, motori_std, minutes_distanza, extra_fosso_sporco, giorni_anticipo_manovra)
         VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id
     ''', (nome, zona, prelievo, motori, distanza, extra_fosso, giorni_ant))
     id_generato = cursor.fetchone()[0]
@@ -353,7 +352,6 @@ if not df_tutti_attivi.empty:
     df_giorno_attivi_global = df_tutti_attivi[(df_tutti_attivi['data_inizio_dt'].dt.date <= st.session_state.data_corrente) & (df_tutti_attivi['data_fine_dt'].dt.date >= st.session_state.data_corrente)].copy()
     rangoni_oggi_global = df_giorno_attivi_global['nome'].str.contains("Rangoni", case=False).any() if not df_giorno_attivi_global.empty else False
     for idx, r in df_giorno_attivi_global.iterrows():
-        # GESTIONE TURNI MULTI-GIORNO (SPEZZAMENTO CORRETTO DELLA FASCIA ORARIA REALE)
         if r['data_inizio_dt'].date() < st.session_state.data_corrente:
             ora_inz_str = "00:00"
         else:
@@ -424,7 +422,6 @@ with tab_home:
                 st.markdown("<div style='text-align:center; color:#888; font-size:12px;'>Centrale Off</div>", unsafe_allow_html=True)
             else:
                 for idx_ut, utenza in df_loop_attivi.iterrows():
-                    # GESTIONE MULTI-GIORNO ANCHE NEL REVENUE SETTIMANALE VELOCE
                     h_inz = "00:00" if utenza['data_inizio_dt'].date() < giorno_loop else utenza['data_inizio_dt'].strftime('%H:%M')
                     h_fin = "24:00" if utenza['data_fine_dt'].date() > giorno_loop else utenza['data_fine_dt'].strftime('%H:%M')
                     if h_fin in ["23:59", "00:00"]: h_fin = "24:00"
@@ -439,7 +436,6 @@ with tab_home:
 
     st.markdown("---")
     
-    # --- AGGIUNTA LOGICA CAMBI STATO MOTORI SOVRAPPOSTI (HOME) ---
     st.markdown(f"### 📊 Fasce di Carico Sovrapposte e Variazioni del Giorno ({st.session_state.data_corrente.strftime('%d/%m/%Y')})")
     df_giorno_corrente_sov = df_tutti_attivi[(df_tutti_attivi['data_inizio_dt'].dt.date <= st.session_state.data_corrente) & (df_tutti_attivi['data_fine_dt'].dt.date >= st.session_state.data_corrente)].copy() if not df_tutti_attivi.empty else pd.DataFrame()
     fasce_cronologiche = calcola_fasce_sovrapposte_giorno(df_giorno_corrente_sov, st.session_state.data_corrente)
@@ -614,7 +610,6 @@ with tab_dashboard:
     </div>
     """, unsafe_allow_html=True)
 
-    # --- AGGIUNTA TABELLA DETTAGLIATA CAMBI STATO ANCHE NELLA DASHBOARD ---
     st.markdown(f"#### 📊 Cronoprogramma di Carico e Fasce Sovrapposte ({st.session_state.data_corrente.strftime('%d/%m/%Y')})")
     fasce_cronologiche_dash = calcola_fasce_sovrapposte_giorno(df_giorno_attivi, st.session_state.data_corrente)
     if fasce_cronologiche_dash:
@@ -639,7 +634,6 @@ with tab_dashboard:
         for idx, r in df_giorno_attivi.iterrows():
             _, portata_s = calcola_giri_chiavone(r['motori_std'], r['zona'])
             
-            # APPLICAZIONE LOGICA SPEZZAMENTO TURNI MULTI-GIORNO NELLA TABELLA DETTAGLIO
             h_inz_tab = "00:00" if r['data_inizio_dt'].date() < st.session_state.data_corrente else r['data_inizio_dt'].strftime('%H:%M')
             h_fin_tab = "24:00" if r['data_fine_dt'].date() > st.session_state.data_corrente else r['data_fine_dt'].strftime('%H:%M')
             if h_fin_tab in ["23:59", "00:00"]: h_fin_tab = "24:00"
@@ -781,7 +775,7 @@ with tab_sala_macchine:
         for minuto_del_giorno in range(1440):
             ora = minuto_del_giorno // 60
             minuto = minuto_del_giorno % 60
-            tempo_minuto_inizio = datetime.combine(giorno_esaminato, time(ora, minute))
+            tempo_minuto_inizio = datetime.combine(giorno_esaminato, time(ora, minuto))
             tempo_minuto_fine = tempo_minuto_inizio + timedelta(minutes=1)
             
             motori_min = 0.0
@@ -796,8 +790,6 @@ with tab_sala_macchine:
             
             motori_minuto_arr[minuto_del_giorno] = motori_min
             
-            # --- RISOLTO IL BUG DEL FUNZIONAMENTO INDEBITO DI P4 ---
-            # Resettiamo sempre lo stato nominale prima di applicare la nuova soglia al minuto corrente
             p4_nominale[minuto_del_giorno] = False
             p3_nominale[minuto_del_giorno] = False
             
@@ -806,7 +798,7 @@ with tab_sala_macchine:
                 if totale_con_perdite <= 6.0:
                     p4_nominale[minuto_del_giorno] = True
                 elif totale_con_perdite <= 8.0:
-                    p3_nominale[minuto_del_giorno] = True  # Ora P4 rimane tassativamente False!
+                    p3_nominale[minuto_del_giorno] = True
                 else:
                     p4_nominale[minuto_del_giorno] = True
                     p3_nominale[minuto_del_giorno] = True
