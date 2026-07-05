@@ -43,7 +43,7 @@ def calcola_giri_chiavone(motori_totali, nome_chiavone):
     except Exception:
         return 0.0, 0.0
     
-    # Mappatura rigida e precisa (Solo 1.8 bar e Portata reale)
+    # Mappatura rigida e precisa basata sulla tabella a 1.8 bar e Portata reale
     tabella_reale = {
         "0.06": {"giri": 0.25, "portata": 1.0},
         "0.12": {"giri": 0.50, "portata": 2.0},
@@ -83,14 +83,14 @@ def calcola_giri_chiavone(motori_totali, nome_chiavone):
     if chiave_motori in tabella_reale:
         return tabella_reale[chiave_motori]["giri"], tabella_reale[chiave_motori]["portata"]
     
-    # Se il valore non è esatto al centesimo, cerca il valore di motori più vicino
+    # Se il valore di motori calcolato ha decimali diversi, trova il più vicino disponibile
     array_motori = [float(k) for k in tabella_reale.keys()]
     idx_vicino = min(range(len(array_motori)), key=lambda i: abs(array_motori[i] - motori_totali))
     chiave_approssimata = f"{array_motori[idx_vicino]:.2f}"
     
     return tabella_reale[chiave_approssimata]["giri"], tabella_reale[chiave_approssimata]["portata"]
 
-# --- NUOVA FUNZIONE DI UTILIÀ PER CALCOLARE LE PERDITE DINAMICHE ---
+# --- FUNZIONE DI UTILIÀ PER CALCOLARE LE PERDITE DINAMICHE ---
 def calcola_motori_con_perdite(motori_nominali):
     if motori_nominali == 0:
         return 0.0
@@ -144,7 +144,7 @@ def aggiorna_irrigante_completo(id_irr, nome, zona, prelievo, motori, distanza, 
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
-        UPDATE irriganti SET nome=%s, zona=%s, tipo_prelievo=%s, motori_std=%s, minutes_distanza=%s, extra_fosso_sporco=%s, giorni_anticipo_manovra=%s WHERE id=%s
+        UPDATE irriganti SET nome=%s, zona=%s, tipo_prelievo=%s, motori_std=%s, minuti_distanza=%s, extra_fosso_sporco=%s, giorni_anticipo_manovra=%s WHERE id=%s
     ''', (nome, zona, prelievo, motori, distanza, extra_fosso, giorni_ant, id_irr))
     conn.commit()
     conn.close()
@@ -311,3 +311,52 @@ if "data_settimana_macchine" not in st.session_state:
 def sync_da_dash():
     st.session_state.data_corrente = st.session_state.data_dash
     st.session_state.data_settimana_macchine = st.session_state.data_dash
+
+# --- PARTE MANCANTE RIPRISTINATA: INTERFACCIA GRAFICA ---
+st.title("💧 IdroSmart PRO 365 - Pannello di Controllo")
+
+menu_scelta = st.sidebar.radio("Navigazione", ["Pannello Principale", "Gestione Profili Irriganti"])
+
+if menu_scelta == "Gestione Profili Irriganti":
+    st.header("👤 Gestione Profili Irriganti")
+    
+    if not df_irriganti.empty:
+        opzioni_irr = {f"{r['nome']} ({r['zona']})": r['id'] for _, r in df_irriganti.iterrows()}
+        selezionato_nome = st.selectbox("Seleziona Profilo per Manovre Personalizzate", list(opzioni_irr.keys()))
+        id_selezionato = opzioni_irr[selezionato_nome]
+        
+        with st.form("aggiungi_manovra_form"):
+            st.write("🔧 **Aggiungi Nuova Manovra Personalizzata**")
+            c_m1, c_m2, c_m3 = st.columns([3, 1, 1])
+            with c_m1: desc_manovra = st.text_input("Descrizione Manovra (es. Aprire Villa, Chiudere Paratia)")
+            with c_m2: val_manovra = st.number_input("Valore Anticipo", min_value=0.5, step=0.5, value=1.0)
+            with c_m3: unita_manovra = st.selectbox("Unità", ["Ore", "Mezze Giornate", "Giorni"])
+            if st.form_submit_button("➕ Aggiungi Manovra a questo Profilo"):
+                if desc_manovra:
+                    inserisci_manovra_personalizzata(id_selezionato, desc_manovra, val_manovra, unita_manovra)
+                    st.success("Manovra aggiunta!")
+                    st.rerun()
+
+        df_m_salvate = pd.read_sql_query(
+            text("SELECT * FROM manovre_personalizzate WHERE irrigante_id = :id"), 
+            engine, 
+            params={"id": int(id_selezionato)}
+        )
+
+        if not df_m_salvate.empty:
+            st.caption("Manovre registrate attive per questo profilo:")
+            for _, m_salv in df_m_salvate.iterrows():
+                c_v1, c_v2 = st.columns([5, 1])
+                with c_v1: st.write(f"🔧 **{m_salv['descrizione']}** da farsi **{m_salv['valore_anticipo']} {m_salv['unita_anticipo']}** prima del turno.")
+                with c_v2: 
+                    if st.button("🗑️ Rimuovi", key=f"del_man_{m_salv['id']}", use_container_width=True):
+                        cancella_manovra_personalizzata(int(m_salv['id']))
+                        st.success("Manovra rimossa!")
+                        st.rerun()
+    else:
+        st.info("Nessun profilo irrigante presente nel database.")
+
+else:
+    st.header("📊 Pannello Principale Rete")
+    st.write("Sistema operativo e pronto per i calcoli idraulici.")
+    st.date_input("Seleziona Data Riferimento", value=st.session_state.data_corrente, key="data_dash", on_change=sync_da_dash)
