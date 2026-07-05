@@ -35,7 +35,6 @@ def get_sqlalchemy_engine():
     return create_engine(db_url)
 
 # --- FUNZIONE DI CALCOLO GIRI CHIAVONE BASATA SULLA TABELLA UNIFICATA ---
-#  INCOLLA QUESTO BLOCCO NUOVO:
 def calcola_giri_chiavone(motori_totali, nome_chiavone):
     try:
         motori_totali = float(motori_totali)
@@ -91,7 +90,7 @@ def calcola_giri_chiavone(motori_totali, nome_chiavone):
     
     return tabella_reale[chiave_approssimata]["giri"], tabella_reale[chiave_approssimata]["portata"]
 
-# --- NUOVA FUNZIONE DI UTILIÀ PER CALCOLARE LE PERDITE DINAMICHE ---
+# --- FUNZIONE DI UTILIÀ PER CALCOLARE LE PERDITE DINAMICHE ---
 def calcola_motori_con_perdite(motori_nominali):
     if motori_nominali == 0:
         return 0.0
@@ -145,7 +144,7 @@ def aggiorna_irrigante_completo(id_irr, nome, zona, prelievo, motori, distanza, 
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
-        UPDATE irriganti SET nome=%s, zona=%s, tipo_prelievo=%s, motori_std=%s, minuti_distanza=%s, extra_fosso_sporco=%s, giorni_anticipo_manovra=%s WHERE id=%s
+        UPDATE irriganti SET nome=%s, zona=%s, tipo_prelievo=%s, motori_std=%s, minutes_distanza=%s, extra_fosso_sporco=%s, giorni_anticipo_manovra=%s WHERE id=%s
     ''', (nome, zona, prelievo, motori, distanza, extra_fosso, giorni_ant, id_irr))
     conn.commit()
     conn.close()
@@ -466,7 +465,7 @@ with tab_dashboard:
         zona_default = irrigante_scelto if irrigante_scelto in ELENCO_CHIAVONI_REALI else "Valvola Contrappesi"
         
     if tipo_pesca_scelta == "Fosso" or tipo_elemento_scelto == "Chiavoni":
-        motori_scelti_sb = st.sidebar.number_input("Motori totali da far uscire (M):", min_value=0.0, max_value=12.0, value=motori_default, step=0.1)
+        motori_scelti_sb = st.sidebar.number_input("Motori totali da far uscire (M):", min_value=0.0, max_value=12.0, value=motori_default, step=0.01, key=f"motori_input_{irrigante_scelto}")
         giri_calc_sb, _ = calcola_giri_chiavone(motori_scelti_sb, zona_default)
         st.sidebar.info(f"⚙️ Giri Chiavone calcolati a fianco: **{giri_calc_sb:.2f} Giri**")
     else:
@@ -491,7 +490,9 @@ with tab_dashboard:
         if not irrigante_scelto or irrigante_scelto == "Nessun agricoltore registrato":
             st.sidebar.error("Seleziona un elemento valido!")
         else:
-            if id_irrigante_db is None:
+            if id_irrigante_db is not None:
+                aggiorna_irrigante_completo(id_irrigante_db, irrigante_scelto, zona_default, tipo_prelievo_default, motori_scelti_sb, 30, 15, 0)
+            else:
                 zona_ins = zona_default
                 prelievo_ins = "Fosso" if irrigante_scelto in ELENCO_CHIAVONI_REALI else tipo_pesca_scelta
                 id_irrigante_db = inserisci_irrigante_completo(irrigante_scelto, zona_ins, prelievo_ins, motori_scelti_sb, 30, 15, 0)
