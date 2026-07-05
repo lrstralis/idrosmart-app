@@ -56,7 +56,7 @@ def calcola_giri_chiavone(motori_totali, nome_chiavone):
         "3.34": {"giri": 4.75, "portata": 70.0}, "3.69": {"giri": 5.00, "portata": 77.0},
         "4.03": {"giri": 5.25, "portata": 85.0}, "4.38": {"giri": 5.50, "portata": 92.0},
         "4.73": {"giri": 5.75, "portata": 99.0}, "5.07": {"giri": 6.00, "portata": 107.0},
-        "5.41": {"giri": 6.25, "portata": 114.0}, "5.75": {"giri": 6.50, "row_p": 121.0},
+        "5.41": {"giri": 6.25, "portata": 114.0}, "5.75": {"giri": 6.50, "portata": 121.0},
         "6.08": {"giri": 6.75, "portata": 128.0}, "6.40": {"giri": 7.00, "portata": 134.0},
         "6.71": {"giri": 7.25, "portata": 141.0}, "7.01": {"giri": 7.50, "portata": 147.0},
         "7.29": {"giri": 7.75, "portata": 153.0}, "7.57": {"giri": 8.00, "portata": 159.0}
@@ -72,7 +72,7 @@ def calcola_giri_chiavone(motori_totali, nome_chiavone):
     
     return tabella_reale[chiave_approssimata]["giri"], tabella_reale[chiave_approssimata]["portata"]
 
-# --- FUNZIONE DI UTILIÀ PER CALCOLARE LE PERDITE DINAMICHE ---
+# --- FUNZIONE DI UTILITÀ PER CALCOLARE LE PERDITE DINAMICHE ---
 def calcola_motori_con_perdite(motori_nominali):
     if motori_nominali == 0:
         return 0.0
@@ -80,7 +80,7 @@ def calcola_motori_con_perdite(motori_nominali):
         return motori_nominali + 0.5
     return motori_nominali + 1.0
 
-# --- NUOVA FUNZIONE PER GENERARE LE FASCE ORARIE DEL TOTALE MOTORI AL MINUTO ---
+# --- FUNZIONE PER GENERARE LE FASCE ORARIE DEL TOTALE MOTORI AL MINUTO ---
 def calcola_fasce_sovrapposte_giorno(df_giorno, data_rif):
     motori_minuto = [0.0] * 1440
     if df_giorno.empty:
@@ -164,11 +164,12 @@ def inizializza_tabelle_personalizzate():
     conn.commit()
     conn.close()
 
+# --- FIXED: 'minuti_distanza' invece del typo errato 'minutes_distanza' ---
 def inserisci_irrigante_completo(nome, zona, prelievo, motori, distanza, extra_fosso, giorni_ant):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
-        INSERT INTO irriganti (nome, zona, tipo_prelievo, motori_std, minutes_distanza, extra_fosso_sporco, giorni_anticipo_manovra)
+        INSERT INTO irriganti (nome, zona, tipo_prelievo, motori_std, minuti_distanza, extra_fosso_sporco, giorni_anticipo_manovra)
         VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id
     ''', (nome, zona, prelievo, motori, distanza, extra_fosso, giorni_ant))
     id_generato = cursor.fetchone()[0]
