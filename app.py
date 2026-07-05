@@ -255,7 +255,7 @@ df_tutti_attivi = pd.read_sql_query(text('''
     ORDER BY p.data_ora_inizio ASC
 '''), engine)
 
-# --- BLOCCO CORRETTO PER LA CONVERSIONE DATE ---
+# --- BLOCCO PER LA CONVERSIONE DATE ---
 if not df_tutti_attivi.empty:
     df_tutti_attivi = df_tutti_attivi[df_tutti_attivi['data_ora_inizio'].str.len() >= 16].copy()
     if not df_tutti_attivi.empty:
@@ -691,16 +691,16 @@ with tab_sala_macchine:
         with col_p4_sm:
             st.markdown("<b style='color:#dc3545;'>📟 ORARI ACCENSIONE POMPA P4 (Bassa Pressione)</b>", unsafe_allow_html=True)
             if fasce_p4:
-                for idx_f, fascia_oraria_testo in enumerate(fasce_p4): 
-                    st.code(fascia_oraria_testo, language=None, key=f"code_p4_{giorno_idx}_{idx_f}")
+                for fascia_oraria_testo in fasce_p4: 
+                    st.code(fascia_oraria_testo, language=None)
             else:
                 st.caption("Pompa P4 Spenta per l'intera giornata")
                 
         with col_p3_sm:
             st.markdown("<b style='color:#17a2b8;'>📟 ORARI ACCENSIONE POMPA P3 (Alta Pressione / Inverter)</b>", unsafe_allow_html=True)
             if fasce_p3:
-                for idx_f, fascia_oraria_testo in enumerate(fasce_p3): 
-                    st.code(fascia_oraria_testo, language=None, key=f"code_p3_{giorno_idx}_{idx_f}")
+                for fascia_oraria_testo in fasce_p3: 
+                    st.code(fascia_oraria_testo, language=None)
             else:
                 st.caption("Pompa P3 Spenta per l'intera giornata")
 
@@ -815,7 +815,7 @@ with tab_anagrafica:
                 if st.form_submit_button("➕ Aggiungi Manovra a questo Profilo"):
                     if desc_manovra:
                         inserisci_manovra_personalizzata(id_selezionato, desc_manovra, val_manovra, unita_manovra)
-                        st.success("Manovra aggiunto!")
+                        st.success("Manovra aggiunta!")
                         st.rerun()
 
             df_m_salvate = pd.read_sql_query(
