@@ -34,7 +34,34 @@ def get_sqlalchemy_engine():
         db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
     return create_engine(db_url)
 
-# --- FUNZIONE DI CALCOLO GIRI CHIAVONE BASATA SULLA TABELLA UNIFICATA ---
+# --- FUNZIONI DI CACHING PER VELOCIZZAZIONE ---
+@st.cache_data
+def get_cached_irriganti():
+    engine = get_sqlalchemy_engine()
+    return pd.read_sql_query(text("SELECT * FROM irriganti ORDER BY nome"), engine)
+
+@st.cache_data
+def get_cached_prenotazioni():
+    engine = get_sqlalchemy_engine()
+    df = pd.read_sql_query(text('''
+        SELECT p.id, i.id AS irr_id, i.nome, i.motori_std, i.zona, i.minuti_distanza, i.extra_fosso_sporco, i.giorni_anticipo_manovra,
+               p.data_ora_inizio, p.data_ora_fine, p.config_scelta
+        FROM prenotazioni p 
+        LEFT JOIN irriganti i ON p.irrigante_id = i.id
+        WHERE p.stato = 'PROGRAMMATO' AND i.id IS NOT NULL
+        ORDER BY p.data_ora_inizio ASC
+    '''), engine)
+    if not df.empty:
+        df = df[df['data_ora_inizio'].str.len() >= 16].copy()
+        if not df.empty:
+            df['data_inizio_dt'] = pd.to_datetime(df['data_ora_inizio'])
+            df['data_fine_dt'] = pd.to_datetime(df['data_ora_fine'])
+    return df
+
+def svuota_cache_dati():
+    st.cache_data.clear()
+
+# --- FUNZIONE DI CALCOLO GIRI CHIAVONE ---
 def calcola_giri_chiavone(motori_totali, nome_chiavone):
     try:
         motori_totali = float(motori_totali)
@@ -77,7 +104,16 @@ def calcola_giri_chiavone(motori_totali, nome_chiavone):
     giri = tabella_reale[chiave_approssimata][pressione_chiavone]
     return giri, motori_totali * 20.0
 
-# --- FUNZIONI DATABASE (ADATTATE A SINTASSI POSTGRESQL DI NEON) ---
+# --- CALCOLO NUOVE PERDITE DINAMICHE ---
+def calcola_perdite_dinamiche(motori_pre_perdite):
+    if motori_pre_perdite == 0:
+        return 0.0
+    elif motori_pre_perdite <= 6.0:
+        return 0.5
+    else:
+        return 1.0
+
+# --- FUNZIONI DATABASE ---
 def inizializza_tabelle_personalizzate():
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -115,6 +151,7 @@ def inserisci_irrigante_completo(nome, zona, prelievo, motori, distanza, extra_f
     id_generato = cursor.fetchone()[0]
     conn.commit()
     conn.close()
+    svuota_cache_dati()
     return id_generato
 
 def aggiorna_irrigante_completo(id_irr, nome, zona, prelievo, motori, distanza, extra_fosso, giorni_ant):
@@ -125,6 +162,7 @@ def aggiorna_irrigante_completo(id_irr, nome, zona, prelievo, motori, distanza, 
     ''', (nome, zona, prelievo, motori, distanza, extra_fosso, giorni_ant, id_irr))
     conn.commit()
     conn.close()
+    svuota_cache_dati()
 
 def inserisci_manovra_personalizzata(irr_id, desc, val, unita):
     conn = get_db_connection()
@@ -146,6 +184,7 @@ def inserisci_prenotazione_avanzata(irrigante_id, inizio, fine, config):
     cursor.execute('INSERT INTO prenotazioni (irrigante_id, data_ora_inizio, data_ora_fine, config_scelta) VALUES (%s, %s, %s, %s)', (irrigante_id, inizio, fine, config))
     conn.commit()
     conn.close()
+    svuota_cache_dati()
 
 def cancella_prenotazione(id_prenotazione):
     conn = get_db_connection()
@@ -153,6 +192,15 @@ def cancella_prenotazione(id_prenotazione):
     cursor.execute("DELETE FROM prenotazioni WHERE id = %s", (id_prenotazione,))
     conn.commit()
     conn.close()
+    svuota_cache_dati()
+
+def cancella_turni_specifici_totali(irrigante_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM prenotazioni WHERE irrigante_id = %s", (irrigante_id,))
+    conn.commit()
+    conn.close()
+    svuota_cache_dati()
 
 def cancella_turni_settimana(data_rif):
     inizio_sett = data_rif - timedelta(days=data_rif.weekday())
@@ -166,6 +214,7 @@ def cancella_turni_settimana(data_rif):
     ''', (str(inizio_sett), str(fine_sett)))
     conn.commit()
     conn.close()
+    svuota_cache_dati()
 
 def cancella_turni_mese(data_rif):
     anno_mese = data_rif.strftime("%Y-%m")
@@ -174,6 +223,7 @@ def cancella_turni_mese(data_rif):
     cursor.execute("DELETE FROM prenotazioni WHERE substring(data_ora_inizio from 1 for 7) = %s", (anno_mese,))
     conn.commit()
     conn.close()
+    svuota_cache_dati()
 
 def cancella_turni_generale():
     conn = get_db_connection()
@@ -181,6 +231,7 @@ def cancella_turni_generale():
     cursor.execute("DELETE FROM prenotazioni")
     conn.commit()
     conn.close()
+    svuota_cache_dati()
 
 def selezionao_pompe_centrale(motori):
     if motori == 0: return "IMPIANTO FERMO", []
@@ -192,7 +243,6 @@ def selezionao_pompe_centrale(motori):
 def ottieni_colore_stato_semplice(motori_totali, rangoni_attivo):
     if motori_totali == 0: return "#A0A0A0", "🟢 IMPIANTO FERMO"
     
-    # Nuova mappatura dinamica e rigida dei colori richiesta dall'utente
     if motori_totali <= 5.0:
         colore_assegnato = "#28a745"  # Verde
     elif motori_totali <= 10.0:
@@ -256,24 +306,9 @@ try:
 except Exception:
     pass
 
-# --- CARICAMENTO E SANITIZZAZIONE RIGIDA DEI DATI ---
-engine = get_sqlalchemy_engine()
-df_irriganti = pd.read_sql_query(text("SELECT * FROM irriganti ORDER BY nome"), engine)
-df_tutti_attivi = pd.read_sql_query(text('''
-    SELECT p.id, i.id AS irr_id, i.nome, i.motori_std, i.zona, i.minuti_distanza, i.extra_fosso_sporco, i.giorni_anticipo_manovra,
-           p.data_ora_inizio, p.data_ora_fine, p.config_scelta
-    FROM prenotazioni p 
-    LEFT JOIN irriganti i ON p.irrigante_id = i.id
-    WHERE p.stato = 'PROGRAMMATO' AND i.id IS NOT NULL
-    ORDER BY p.data_ora_inizio ASC
-'''), engine)
-
-# --- BLOCCO PER LA CONVERSIONE DATE ---
-if not df_tutti_attivi.empty:
-    df_tutti_attivi = df_tutti_attivi[df_tutti_attivi['data_ora_inizio'].str.len() >= 16].copy()
-    if not df_tutti_attivi.empty:
-        df_tutti_attivi['data_inizio_dt'] = pd.to_datetime(df_tutti_attivi['data_ora_inizio'])
-        df_tutti_attivi['data_fine_dt'] = pd.to_datetime(df_tutti_attivi['data_ora_fine'])
+# --- CARICAMENTO RIGIDO DEI DATI DA CACHE ---
+df_irriganti = get_cached_irriganti()
+df_tutti_attivi = get_cached_prenotazioni()
 
 if 'data_corrente' not in st.session_state:
     st.session_state.data_corrente = datetime.now().date()
@@ -305,10 +340,10 @@ if not df_tutti_attivi.empty:
     for idx, r in df_giorno_attivi_global.iterrows():
         ora_inz_str = "00:00" if r['data_inizio_dt'].date() < st.session_state.data_corrente else r['data_inizio_dt'].strftime('%H:%M')
         ora_fin_str = "24:00" if r['data_fine_dt'].date() > st.session_state.data_corrente else r['data_fine_dt'].strftime('%H:%M')
-        irriganti_giorno_corrente.append({"nome": r['nome'], "fascia": f"{ora_inz_str}-{ora_fin_str}", "motori": r['motori_std']})
+        irriganti_giorno_corrente.append({"id": r['id'], "nome": r['nome'], "fascia": f"{ora_inz_str}-{ora_fin_str}", "motori": r['motori_std']})
 
 motori_pre_perdite_global = df_tutti_attivi[(df_tutti_attivi['data_inizio_dt'].dt.date <= st.session_state.data_corrente) & (df_tutti_attivi['data_fine_dt'].dt.date >= st.session_state.data_corrente)]['motori_std'].sum() if not df_tutti_attivi.empty else 0.0
-motori_giorno_global = (motori_pre_perdite_global + 0.5) if motori_pre_perdite_global > 0 else 0.0
+motori_giorno_global = (motori_pre_perdite_global + calcola_perdite_dinamiche(motori_pre_perdite_global))
 testo_pompe_g, _ = selezionao_pompe_centrale(motori_giorno_global)
 esito_colore_g, _ = ottieni_colore_stato_semplice(motori_giorno_global, rangoni_oggi_global)
 _, portata_globale_g_ls = calcola_giri_chiavone(motori_giorno_global, "Generico")
@@ -326,7 +361,7 @@ with tab_home:
     st.markdown(f"""
     <div style="background-color:{esito_colore_g}; padding:18px; border-radius:10px; text-align:center; margin-bottom:20px;">
         <h3 style="color:white; margin:0; font-size:1.3rem;">📟 STATO IDRAULICO CORRENTE: {st.session_state.data_corrente.strftime('%d/%m/%Y')}</h3>
-        <h1 style="color:white; margin:5px 0; font-size:38px; font-weight:bold;">{motori_giorno_global:.2f} M totali impegnati <span style='font-size:18px; font-weight:normal;'>(Incluso +0.50 M perdite)</span></h1>
+        <h1 style="color:white; margin:5px 0; font-size:38px; font-weight:bold;">{motori_giorno_global:.2f} M totali impegnati <span style='font-size:18px; font-weight:normal;'>(Incluso perdite dinamiche)</span></h1>
         <p style="color:white; margin:0; font-size:16px; font-weight:500;">ASSETTO IMPIANTO: {testo_pompe_g} | PORTATA COMPLESSIVA RETE: {portata_globale_g_ls:.0f} l/s</p>
     </div>
     """, unsafe_allow_html=True)
@@ -346,7 +381,7 @@ with tab_home:
         df_loop_attivi = df_tutti_attivi[(df_tutti_attivi['data_inizio_dt'].dt.date <= giorno_loop) & (df_tutti_attivi['data_fine_dt'].dt.date >= giorno_loop)] if not df_tutti_attivi.empty else pd.DataFrame()
         
         motori_loop_pre = df_loop_attivi['motori_std'].sum() if not df_loop_attivi.empty else 0.0
-        motori_loop = (motori_loop_pre + 0.5) if motori_loop_pre > 0 else 0.0
+        motori_loop = (motori_loop_pre + calcola_perdite_dinamiche(motori_loop_pre))
         rangoni_loop = df_loop_attivi['nome'].str.contains("Rangoni", case=False).any() if not df_loop_attivi.empty else False
         colore_loop, _ = ottieni_colore_stato_semplice(motori_loop, rangoni_loop)
         
@@ -366,7 +401,14 @@ with tab_home:
                     h_inz = utenza['data_inizio_dt'].strftime('%H:%M')
                     h_fin = utenza['data_fine_dt'].strftime('%H:%M')
                     if h_fin == "23:59" or h_fin == "00:00": h_fin = "24:00"
-                    st.markdown(f'<div style="background-color:#f8f9fa; padding:5px; border-radius:4px; margin-bottom:5px; border-left:3px solid #007bff; text-align:left;"><div style="font-size:12px; font-weight:bold; color:#212529;">{utenza["nome"]}</div><div style="font-size:11px; color:#495057; font-family:monospace;">⏱️ {h_inz}-{h_fin}</div></div>', unsafe_allow_html=True)
+                    
+                    c_b1, c_b2 = st.columns([4, 1])
+                    with c_b1:
+                        st.markdown(f'<div style="background-color:#f8f9fa; padding:5px; border-radius:4px; margin-bottom:5px; border-left:3px solid #007bff; text-align:left;"><div style="font-size:12px; font-weight:bold; color:#212529;">{utenza["nome"]}</div><div style="font-size:11px; color:#495057; font-family:monospace;">⏱️ {h_inz}-{h_fin}</div></div>', unsafe_allow_html=True)
+                    with c_b2:
+                        if st.button("❌", key=f"del_loop_{utenza['id']}", help="Rimuovi questo turno"):
+                            cancella_prenotazione(int(utenza['id']))
+                            st.rerun()
 
     st.markdown("---")
     st.markdown(f"### 📋 Foglio Giornaliero Dettagliato del **{st.session_state.data_corrente.strftime('%d/%m/%Y')}**")
@@ -374,13 +416,19 @@ with tab_home:
         st.info("Nessun irrigante attivo programmato per questa giornata.")
     else:
         for irr in irriganti_giorno_corrente:
-            col_info, col_totale = st.columns([3, 1])
+            col_info, col_totale, col_remove = st.columns([3, 1, 0.5])
             with col_info:
                 st.markdown(f"**<span style='font-size:1.25rem;'>{irr['nome']}</span>**", unsafe_allow_html=True)
                 st.caption(f"🕒 Fascia Oraria Attiva: {irr['fascia']}")
             with col_totale:
                 colore_f, pompe_f = determines_info_pompe_home(irr['motori'])
                 st.markdown(f'<div style="background-color:{colore_f}; padding:10px; border-radius:6px; text-align:center; border: 1px solid rgba(0,0,0,0.1); color: black; font-weight:bold;">{irr["motori"]:.2f} M <br><span style="font-size:0.85rem; font-weight:normal;">({pompe_f})</span></div>', unsafe_allow_html=True)
+            with col_remove:
+                st.write("")
+                st.write("")
+                if st.button("❌", key=f"del_home_det_{irr['id']}", help="Elimina il turno"):
+                    cancella_prenotazione(int(irr['id']))
+                    st.rerun()
 
 # =========================================================
 # TAB 1: GESTIONE TURNI & RETE
@@ -474,7 +522,15 @@ with tab_dashboard:
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("⚠️ Danger Zone — Rimozione Massiva")
-    opzione_canc_massa = st.sidebar.selectbox("Scegli blocco da svuotare:", ["Nessuna azione", "Turni della Settimana", "Turni del Mese", "Tutti i turni in generale"])
+    opzione_canc_massa = st.sidebar.selectbox("Scegli blocco da svuotare:", ["Nessuna azione", "Turni della Settimana", "Turni del Mese", "Tutti i turni in generale", "Rimuovi Utenza specifica dal Calendario"])
+    
+    id_specifico_canc = None
+    if opzione_canc_massa == "Rimuovi Utenza specifica dal Calendario":
+        opzioni_canc_spec = df_irriganti['nome'].tolist() if not df_irriganti.empty else []
+        selezionato_canc_spec = st.sidebar.selectbox("Utenza da cancellare interamente:", opzioni_canc_spec)
+        if selezionato_canc_spec and not df_irriganti.empty:
+            id_specifico_canc = int(df_irriganti[df_irriganti['nome'] == selezionato_canc_spec].iloc[0]['id'])
+
     if opzione_canc_massa != "Nessuna azione":
         testo_conferma = "CONFERMA ELIMINAZIONE"
         codice_verifica = st.sidebar.text_input(f"Digita '{testo_conferma}' per procedere:")
@@ -486,6 +542,8 @@ with tab_dashboard:
                     cancella_turni_mese(st.session_state.data_corrente)
                 elif opzione_canc_massa == "Tutti i turni in generale":
                     cancella_turni_generale()
+                elif opzione_canc_massa == "Rimuovi Utenza specifica dal Calendario" and id_specifico_canc is not None:
+                    cancella_turni_specifici_totali(id_specifico_canc)
                 st.rerun()
 
     c_nav1, c_nav2, c_nav3 = st.columns([1, 2, 1])
@@ -497,7 +555,7 @@ with tab_dashboard:
     rangoni_oggi = df_giorno_attivi['nome'].str.contains("Rangoni", case=False).any() if not df_giorno_attivi.empty else False
 
     motori_pre_perdite = df_giorno_attivi['motori_std'].sum() if not df_giorno_attivi.empty else 0.0
-    motori_giorno = (motori_pre_perdite + 0.5) if motori_pre_perdite > 0 else 0.0
+    motori_giorno = (motori_pre_perdite + calcola_perdite_dinamiche(motori_pre_perdite))
     testo_pompe, _ = selezionao_pompe_centrale(motori_giorno)
     esito_colore, _ = ottieni_colore_stato_semplice(motori_giorno, rangoni_oggi)
     _, portata_globale_ls = calcola_giri_chiavone(motori_giorno, "Generico")
@@ -505,7 +563,7 @@ with tab_dashboard:
     st.markdown(f"""
     <div style="background-color:{esito_colore}; padding:20px; border-radius:10px; text-align:center; margin-bottom:25px;">
         <h2 style="color:white; margin:0;">📟 STATO IDRAULICO RETE DEL GIORNO: {st.session_state.data_corrente.strftime('%d/%m/%Y')}</h2>
-        <h1 style="color:white; margin:10px 0 0 0; font-size:45px; font-weight:bold;">{motori_giorno:.2f} M totali impegnati <span style='font-size:20px; font-weight:normal;'>(Incluso +0.50 M perdite)</span></h1>
+        <h1 style="color:white; margin:10px 0 0 0; font-size:45px; font-weight:bold;">{motori_giorno:.2f} M totali impegnati <span style='font-size:20px; font-weight:normal;'>(Incluso perdite dinamiche)</span></h1>
         <p style="color:white; margin:5px 0 0 0; font-size:18px; font-weight:500;">ASSETTO CENTRALINA: {testo_pompe} | PORTATA RETE: {portata_globale_ls:.0f} l/s</p>
     </div>
     """, unsafe_allow_html=True)
@@ -514,25 +572,15 @@ with tab_dashboard:
     if df_giorno_attivi.empty:
         st.info("Nessun prelievo programmato per questo giorno.")
     else:
-        righe_tabella = []
         for idx, r in df_giorno_attivi.iterrows():
             _, portata_s = calcola_giri_chiavone(r['motori_std'], r['zona'])
             h_f_vis = "24:00" if r['data_fine_dt'].strftime('%H:%M') in ["23:59", "00:00"] else r['data_fine_dt'].strftime('%H:%M')
-            righe_tabella.append({
-                "Azienda Agricola / Contadino": r['nome'], "Zona Idraulica": r['zona'],
-                "Fascia Oraria": f"{r['data_inizio_dt'].strftime('%H:%M')} - {h_f_vis}",
-                "Modalità": r['config_scelta'], "Carico Richiesto (Motori M)": f"{r['motori_std']:.2f} M", "Portata (l/s)": f"{portata_s:.0f} l/s"
-            })
-        st.table(pd.DataFrame(righe_tabella))
-        
-        st.markdown("##### 🗑️ Rimozione Manuale Veloce Turni del Giorno:")
-        for idx, r in df_giorno_attivi.iterrows():
-            c_del1, c_del2 = st.columns([5, 1])
-            with c_del1: 
-                h_f_vis = "24:00" if r['data_fine_dt'].strftime('%H:%M') in ["23:59", "00:00"] else r['data_fine_dt'].strftime('%H:%M')
-                st.write(f"🚜 Turno: **{r['nome']}** | Orario: {r['data_inizio_dt'].strftime('%H:%M')} - {h_f_vis} ({r['zona']}) | Modalità: *{r['config_scelta']}*")
-            with c_del2:
-                if st.button("🗑️ Rimuovi", key=f"del_dash_{r['id']}", use_container_width=True):
+            
+            c_sh1, c_sh2 = st.columns([6, 1])
+            with c_sh1:
+                st.info(f"🚜 **{r['nome']}** | 📍 *{r['zona']}* | ⏱️ {r['data_inizio_dt'].strftime('%H:%M')} - {h_f_vis} | Mod: *{r['config_scelta']}* | Carico: **{r['motori_std']:.2f} M** | Portata: **{portata_s:.0f} l/s**")
+            with c_sh2:
+                if st.button("❌ Rimuovi", key=f"del_dash_new_{r['id']}", use_container_width=True):
                     cancella_prenotazione(int(r['id']))
                     st.rerun()
 
@@ -612,7 +660,7 @@ with tab_agenda:
             st.info("Nessuna manovra fisica pianificata o configurata in anagrafica per oggi.")
 
 # =========================================================
-# TAB 3: VIDEATA SALA MACCHINE (TIMER SETTIMANALE CON ALLINEAMENTO RITARDI MINUTO PER MINUTO)
+# TAB 3: VIDEATA SALA MACCHINE (OTTIMIZZATA PER MASSIMA VELOCITÀ)
 # =========================================================
 with tab_sala_macchine:
     st.title("📟 Quadro Controllo Automatizzato Orologi di Centrale")
@@ -646,41 +694,54 @@ with tab_sala_macchine:
         else:
             df_giorno_sm = pd.DataFrame()
             
-        # Simulazione al minuto (1440 minuti in un giorno) per calcolare accuratamente i ritardi temporali richiesti
         p4_nominale = [False] * 1440
         p3_nominale = [False] * 1440
         motori_minuto_arr = [0.0] * 1440
         
-        for minuto_del_giorno in range(1440):
-            ora = minuto_del_giorno // 60
-            minuto = minuto_del_giorno % 60
-            tempo_minuto_inizio = datetime.combine(giorno_esaminato, time(ora, minuto))
-            tempo_minuto_fine = tempo_minuto_inizio + timedelta(minutes=1)
+        # Algoritmo velocizzato tramite analisi esclusiva degli orari di cambio stato
+        punti_cambio = {0, 1440}
+        if not df_giorno_sm.empty:
+            for _, turno in df_giorno_sm.iterrows():
+                da_i = turno['data_inizio_dt']
+                da_f = turno['data_fine_dt']
+                
+                m_inz = (da_i.hour * 60 + da_i.minute) if da_i.date() == giorno_esaminato else 0
+                m_fin = (da_f.hour * 60 + da_f.minute) if da_f.date() == giorno_esaminato else 1440
+                if da_f.time() == time(23, 59): m_fin = 1440
+                
+                punti_cambio.add(max(0, min(1440, m_inz)))
+                punti_cambio.add(max(0, min(1440, m_fin)))
+        
+        punti_ordinati = sorted(list(punti_cambio))
+        for idx_p in range(len(punti_ordinati) - 1):
+            inizio_p = punti_ordinati[idx_p]
+            fine_p = punti_ordinati[idx_p + 1]
             
+            tempo_mediano = datetime.combine(giorno_esaminato, time(inizio_p // 60, inizio_p % 60))
             motori_min = 0.0
             if not df_giorno_sm.empty:
                 for _, turno in df_giorno_sm.iterrows():
                     limite_fine = turno['data_fine_dt']
                     if limite_fine.time() == time(23, 59):
                         limite_fine = datetime.combine(limite_fine.date(), time(23, 59, 59))
-                        
-                    if turno['data_inizio_dt'] < tempo_minuto_fine and limite_fine >= tempo_minuto_inizio:
+                    if turno['data_inizio_dt'] <= tempo_mediano and limite_fine >= tempo_mediano:
                         motori_min += float(turno['motori_std'])
-            
-            motori_minuto_arr[minuto_del_giorno] = motori_min
+                        
+            p4_w = False
+            p3_w = False
             if motori_min > 0:
-                totale_con_perdite = motori_min + 0.5
-                if totale_con_perdite <= 6.0:
-                    p4_nominale[minuto_del_giorno] = True
-                elif totale_con_perdite <= 8.0:
-                    p3_nominale[minuto_del_giorno] = True
-                else:
-                    p4_nominale[minuto_del_giorno] = True
-                    p3_nominale[minuto_del_giorno] = True
+                totale_con_perdite = motori_min + calcola_perdite_dinamiche(motori_min)
+                if totale_con_perdite <= 6.0: p4_w = True
+                elif totale_con_perdite <= 8.0: p3_w = True
+                else: p4_w = True; p3_w = True
+                
+            for m_fill in range(inizio_p, fine_p):
+                motori_minuto_arr[m_fill] = motori_min
+                p4_nominale[m_fill] = p4_w
+                p3_nominale[m_fill] = p3_w
 
         p4_attiva = [False] * 1440
         p3_attiva = [False] * 1440
-        
         p4_reale_prec = False
         p3_reale_prec = False
         
@@ -689,14 +750,13 @@ with tab_sala_macchine:
             p4_wants = p4_nominale[idx_m]
             p3_wants = p3_nominale[idx_m]
             
-            # REGOLA: Se si devono accendere INSIEME (ed erano entrambe spente al minuto precedente), la P4 parte 3 minuti dopo la P3
             if p4_wants and p3_wants and not p4_reale_prec and not p3_reale_prec:
                 p3_attiva[idx_m] = True
                 p4_attiva[idx_m] = False
                 p3_reale_prec = True
                 p4_reale_prec = False
                 idx_m += 1
-                for _ in range(2): # mantieni il ritardo per i successivi 2 minuti (totale 3 minuti di offset)
+                for _ in range(2):
                     if idx_m < 1440:
                         p3_attiva[idx_m] = p3_nominale[idx_m]
                         p4_attiva[idx_m] = False
@@ -705,10 +765,8 @@ with tab_sala_macchine:
                         idx_m += 1
                 continue
             
-            # REGOLA: Accensione ritardata per P3 se deve accendersi subito dopo lo spegnimento di P4
             if p3_wants and not p4_wants and p4_reale_prec and not p3_reale_prec:
                 motori_attuali = motori_minuto_arr[idx_m]
-                # Se i motori sono tra 5 e 7 il ritardo è di 4 minuti, altrimenti di 2 minuti
                 ritardo_minuti = 4 if (5.0 <= motori_attuali <= 7.0) else 2
                 for _ in range(ritardo_minuti):
                     if idx_m < 1440:
@@ -719,7 +777,6 @@ with tab_sala_macchine:
                         idx_m += 1
                 continue
                 
-            # REGOLA: Se una delle due pompe è già funzionante, si possono attaccare senza problemi
             p4_attiva[idx_m] = p4_wants
             p3_attiva[idx_m] = p3_wants
             p4_reale_prec = p4_attiva[idx_m]
@@ -730,7 +787,6 @@ with tab_sala_macchine:
             fasce = []
             in_blocco = False
             inizio_blocco = None
-            
             for m_giorno in range(1440):
                 if array_presenza[m_giorno] and not in_blocco:
                     in_blocco = True
@@ -742,9 +798,7 @@ with tab_sala_macchine:
                     h_fin = m_giorno // 60
                     m_fin = m_giorno % 60
                     fasce.append(f"⏱️ {inizio_blocco} — {h_fin:02d}:{m_fin:02d}")
-            
-            if in_blocco:
-                fasce.append(f"⏱️ {inizio_blocco} — 24:00")
+            if in_blocco: fasce.append(f"⏱️ {inizio_blocco} — 24:00")
             return fasce
 
         fasce_p4 = unisci_fasce_orarie(p4_attiva)
@@ -754,18 +808,14 @@ with tab_sala_macchine:
         with col_p4_sm:
             st.markdown("<b style='color:#dc3545;'>📟 ORARI ACCENSIONE POMPA P4 (Bassa Pressione)</b>", unsafe_allow_html=True)
             if fasce_p4:
-                for fascia_oraria_testo in fasce_p4: 
-                    st.code(fascia_oraria_testo, language=None)
-            else:
-                st.caption("Pompa P4 Spenta per l'intera giornata")
+                for fascia_oraria_testo in fasce_p4: st.code(fascia_oraria_testo, language=None)
+            else: st.caption("Pompa P4 Spenta per l'intera giornata")
                 
         with col_p3_sm:
             st.markdown("<b style='color:#17a2b8;'>📟 ORARI ACCENSIONE POMPA P3 (Alta Pressione / Inverter)</b>", unsafe_allow_html=True)
             if fasce_p3:
-                for fascia_oraria_testo in fasce_p3: 
-                    st.code(fascia_oraria_testo, language=None)
-            else:
-                st.caption("Pompa P3 Spenta per l'intera giornata")
+                for fascia_oraria_testo in fasce_p3: st.code(fascia_oraria_testo, language=None)
+            else: st.caption("Pompa P3 Spenta per l'intera giornata")
 
 # =========================================================
 # TAB 4: GESTIONE ANAGRAFICA
@@ -780,13 +830,7 @@ with tab_anagrafica:
         n_prelievo = st.selectbox("Prelievo Standard", ["Fosso", "Diretta"], key="ins_prelievo")
         
         is_diretta_ins = (n_prelievo == "Diretta")
-        n_zona = st.selectbox(
-            "Nodo Idraulico Associato", 
-            ELENCO_CHIAVONI_REALI, 
-            index=0, 
-            disabled=is_diretta_ins,
-            key="ins_zona"
-        )
+        n_zona = st.selectbox("Nodo Idraulico Associato", ELENCO_CHIAVONI_REALI, index=0, disabled=is_diretta_ins, key="ins_zona")
         
         n_motori = st.number_input("Motori assorbiti (M)", min_value=0.0, max_value=12.0, value=1.0, step=0.1, key="ins_motori")
         n_distanza = st.number_input("Minuti di distanza per apertura:", min_value=0, max_value=180, value=30, key="ins_distanza")
@@ -803,11 +847,7 @@ with tab_anagrafica:
         
         if st.button("➕ Inserisci Manovra nella Lista"):
             if desc_manovra_ins:
-                st.session_state.manovre_temporanee_registrazione.append({
-                    "descrizione": desc_manovra_ins,
-                    "valore": val_manovra_ins,
-                    "unita": unita_manovra_ins
-                })
+                st.session_state.manovre_temporanee_registrazione.append({"descrizione": desc_manovra_ins, "valore": val_manovra_ins, "unita": unita_manovra_ins})
                 st.success(f"Manovra '{desc_manovra_ins}' aggiunta alla lista provvisoria!")
                 st.rerun()
 
@@ -815,8 +855,7 @@ with tab_anagrafica:
             st.markdown("##### 📝 Lista delle Manovre pronte al salvataggio:")
             for idx_tmp, m_tmp in enumerate(st.session_state.manovre_temporanee_registrazione):
                 col_m_v, col_m_d = st.columns([5, 1])
-                with col_m_v:
-                    st.write(f"🔧 **{m_tmp['descrizione']}** da farsi **{m_tmp['valore']} {m_tmp['unita']}** prima del turno.")
+                with col_m_v: st.write(f"🔧 **{m_tmp['descrizione']}** da farsi **{m_tmp['valore']} {m_tmp['unita']}** prima del turno.")
                 with col_m_d:
                     if st.button("🗑️ Rimuovi", key=f"del_tmp_m_{idx_tmp}", use_container_width=True):
                         st.session_state.manovre_temporanee_registrazione.pop(idx_tmp)
@@ -827,10 +866,8 @@ with tab_anagrafica:
             if n_nome:
                 zona_da_salvare = "Valvola Contrappesi" if is_diretta_ins else n_zona
                 nuovo_id = inserisci_irrigante_completo(n_nome, zona_da_salvare, n_prelievo, n_motori, n_distanza, n_extra_fosso, n_giorni_ant)
-                
                 for m_salvare in st.session_state.manovre_temporanee_registrazione:
                     inserisci_manovra_personalizzata(nuovo_id, m_salvare['descrizione'], m_salvare['valore'], m_salvare['unita'])
-                
                 st.session_state.manovre_temporanee_registrazione = []
                 st.success("Profilo salvato correttamente!")
                 st.rerun()
@@ -845,18 +882,11 @@ with tab_anagrafica:
             with st.form("form_mod_irr"):
                 m_nome = st.text_input("Identificativo", value=str(dati_c['nome']))
                 m_prelievo = st.selectbox("Prelievo", ["Fosso", "Diretta"], index=0 if dati_c['tipo_prelievo'] == "Fosso" else 1)
-                
                 is_diretta_mod = (m_prelievo == "Diretta")
                 zona_corrente_db = str(dati_c['zona'])
                 zona_preimpostata_selectbox = zona_corrente_db if zona_corrente_db in ELENCO_CHIAVONI_REALI else ELENCO_CHIAVONI_REALI[0]
                 
-                m_zona = st.selectbox(
-                    "Chiavone Reale Associato", 
-                    ELENCO_CHIAVONI_REALI, 
-                    index=ELENCO_CHIAVONI_REALI.index(zona_preimpostata_selectbox), 
-                    disabled=is_diretta_mod
-                )
-                
+                m_zona = st.selectbox("Chiavone Reale Associato", ELENCO_CHIAVONI_REALI, index=ELENCO_CHIAVONI_REALI.index(zona_preimpostata_selectbox), disabled=is_diretta_mod)
                 m_motori = st.number_input("Motori (M)", min_value=0.0, max_value=12.0, value=float(dati_c['motori_std']))
                 m_distanza = st.number_input("Minuti di distanza:", min_value=0, max_value=180, value=int(dati_c['minuti_distanza']))
                 m_extra_fosso = st.number_input("Minuti Extra Fosso:", min_value=0, max_value=180, value=int(dati_c['extra_fosso_sporco']))
@@ -869,7 +899,6 @@ with tab_anagrafica:
 
             st.markdown("---")
             st.subheader(f"⚙️ Configurazione Manovre Personalizzate per {dati_c['nome']}")
-            
             with st.form("form_aggiungi_manovra_personalizzata"):
                 c_m1, c_m2, c_m3 = st.columns([3, 1, 1])
                 with c_m1: desc_manovra = st.text_input("Cosa fare? (Descrizione Manovra)", placeholder="Es. Pulizia filtri secondari")
@@ -881,12 +910,7 @@ with tab_anagrafica:
                         st.success("Manovra aggiunta!")
                         st.rerun()
 
-            df_m_salvate = pd.read_sql_query(
-                text("SELECT * FROM manovre_personalizzate WHERE irrigante_id = :id"), 
-                engine, 
-                params={"id": int(id_selezionato)}
-            )
-
+            df_m_salvate = pd.read_sql_query(text("SELECT * FROM manovre_personalizzate WHERE irrigante_id = :id"), engine, params={"id": int(id_selezionato)})
             if not df_m_salvate.empty:
                 st.caption("Manovre registrate attive per questo profilo:")
                 for _, m_salv in df_m_salvate.iterrows():
