@@ -639,7 +639,7 @@ with tab_sala_macchine:
         for quarto in range(96):
             ora = quarto // 4
             minuto = (quarto % 4) * 15
-            tempo_quarto_inizio = datetime.combine(giorno_esaminato, time(ora, minute))
+            tempo_quarto_inizio = datetime.combine(giorno_esaminato, time(ora, minuto))
             tempo_quarto_fine = tempo_quarto_inizio + timedelta(minutes=15)
             
             motori_quarto = 0.0
@@ -691,16 +691,16 @@ with tab_sala_macchine:
         with col_p4_sm:
             st.markdown("<b style='color:#dc3545;'>📟 ORARI ACCENSIONE POMPA P4 (Bassa Pressione)</b>", unsafe_allow_html=True)
             if fasce_p4:
-                for fascia_oraria_testo in fasce_p4: 
-                    st.code(fascia_oraria_testo, language=None)
+                for idx_f, fascia_oraria_testo in enumerate(fasce_p4): 
+                    st.code(fascia_oraria_testo, language=None, key=f"code_p4_{giorno_idx}_{idx_f}")
             else:
                 st.caption("Pompa P4 Spenta per l'intera giornata")
                 
         with col_p3_sm:
             st.markdown("<b style='color:#17a2b8;'>📟 ORARI ACCENSIONE POMPA P3 (Alta Pressione / Inverter)</b>", unsafe_allow_html=True)
             if fasce_p3:
-                for fascia_oraria_testo in fasce_p3: 
-                    st.code(fascia_oraria_testo, language=None)
+                for idx_f, fascia_oraria_testo in enumerate(fasce_p3): 
+                    st.code(fascia_oraria_testo, language=None, key=f"code_p3_{giorno_idx}_{idx_f}")
             else:
                 st.caption("Pompa P3 Spenta per l'intera giornata")
 
@@ -815,7 +815,7 @@ with tab_anagrafica:
                 if st.form_submit_button("➕ Aggiungi Manovra a questo Profilo"):
                     if desc_manovra:
                         inserisci_manovra_personalizzata(id_selezionato, desc_manovra, val_manovra, unita_manovra)
-                        st.success("Manovra aggiunta!")
+                        st.success("Manovra aggiunto!")
                         st.rerun()
 
             df_m_salvate = pd.read_sql_query(
