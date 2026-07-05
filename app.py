@@ -191,12 +191,25 @@ def selezionao_pompe_centrale(motori):
 
 def ottieni_colore_stato_semplice(motori_totali, rangoni_attivo):
     if motori_totali == 0: return "#A0A0A0", "🟢 IMPIANTO FERMO"
+    
+    # Nuova mappatura dinamica e rigida dei colori richiesta dall'utente
+    if motori_totali <= 5.0:
+        colore_assegnato = "#28a745"  # Verde
+    elif motori_totali <= 10.0:
+        colore_assegnato = "#007bff"  # Blu
+    elif motori_totali <= 11.0:
+        colore_assegnato = "#e83e8c"  # Rosa
+    elif motori_totali <= 12.0:
+        colore_assegnato = "#ffc107"  # Giallo
+    else:
+        colore_assegnato = "#dc3545"  # Rosso
+
     if rangoni_attivo:
-        if motori_totali > 12.0: return "#dc3545", f"🔴 TEST FALLITO ({motori_totali:.1f} M)!"
-        elif motori_totali >= 11.0: return "#fd7e14", "🟠 SOGLIA CRITICA TEST"
-        else: return "#28a745", "🟢 REGIME DI PROVA"
-    if motori_totali > 12.0: return "#dc3545", "🔴 SOVRACCARICO STRUTTURALE"
-    return "#28a745", "🟢 CARICO RETE REGOLARE"
+        if motori_totali > 12.0: return colore_assegnato, f"🔴 TEST FALLITO ({motori_totali:.1f} M)!"
+        elif motori_totali >= 11.0: return colore_assegnato, "🟠 SOGLIA CRITICA TEST"
+        else: return colore_assegnato, "🟢 REGIME DI PROVA"
+    if motori_totali > 12.0: return colore_assegnato, "🔴 SOVRACCARICO STRUTTURALE"
+    return colore_assegnato, "🟢 CARICO RETE REGOLARE"
 
 def analizza_orario_lavoro(dt_obj):
     t = dt_obj.time()
@@ -599,11 +612,11 @@ with tab_agenda:
             st.info("Nessuna manovra fisica pianificata o configurata in anagrafica per oggi.")
 
 # =========================================================
-# TAB 3: VIDEATA SALA MACCHINE (TIMER SETTIMANALE BLINDATO)
+# TAB 3: VIDEATA SALA MACCHINE (TIMER SETTIMANALE CON ALLINEAMENTO RITARDI MINUTO PER MINUTO)
 # =========================================================
 with tab_sala_macchine:
     st.title("📟 Quadro Controllo Automatizzato Orologi di Centrale")
-    st.write("La sezione mostra esclusivamente gli intervalli di accensione e spegnimento operativi delle pompe P3 e P4 calcolati in base al carico totale di motori richiesto in ogni istante del giorno.")
+    st.write("La sezione mostra esclusivamente gli intervalli di accensione e spegnimento operativi delle pompe P3 e P4 calcolati in base al carico totale di motori richiesto in ogni istante del giorno con logica dei ritardi integrata.")
     
     c_sm1, c_sm2, c_sm3 = st.columns([1, 2, 1])
     with c_sm1:
@@ -633,51 +646,101 @@ with tab_sala_macchine:
         else:
             df_giorno_sm = pd.DataFrame()
             
-        p4_attiva = [False] * 96
-        p3_attiva = [False] * 96
+        # Simulazione al minuto (1440 minuti in un giorno) per calcolare accuratamente i ritardi temporali richiesti
+        p4_nominale = [False] * 1440
+        p3_nominale = [False] * 1440
+        motori_minuto_arr = [0.0] * 1440
         
-        for quarto in range(96):
-            ora = quarto // 4
-            minuto = (quarto % 4) * 15
-            tempo_quarto_inizio = datetime.combine(giorno_esaminato, time(ora, minuto))
-            tempo_quarto_fine = tempo_quarto_inizio + timedelta(minutes=15)
+        for minuto_del_giorno in range(1440):
+            ora = minuto_del_giorno // 60
+            minuto = minuto_del_giorno % 60
+            tempo_minuto_inizio = datetime.combine(giorno_esaminato, time(ora, minuto))
+            tempo_minuto_fine = tempo_minuto_inizio + timedelta(minutes=1)
             
-            motori_quarto = 0.0
+            motori_min = 0.0
             if not df_giorno_sm.empty:
                 for _, turno in df_giorno_sm.iterrows():
                     limite_fine = turno['data_fine_dt']
                     if limite_fine.time() == time(23, 59):
                         limite_fine = datetime.combine(limite_fine.date(), time(23, 59, 59))
                         
-                    if turno['data_inizio_dt'] < tempo_quarto_fine and limite_fine >= tempo_quarto_inizio:
-                        motori_quarto += float(turno['motori_std'])
+                    if turno['data_inizio_dt'] < tempo_minuto_fine and limite_fine >= tempo_minuto_inizio:
+                        motori_min += float(turno['motori_std'])
             
-            if motori_quarto > 0:
-                totale_con_perdite = motori_quarto + 0.5
-                
+            motori_minuto_arr[minuto_del_giorno] = motori_min
+            if motori_min > 0:
+                totale_con_perdite = motori_min + 0.5
                 if totale_con_perdite <= 6.0:
-                    p4_attiva[quarto] = True
+                    p4_nominale[minuto_del_giorno] = True
                 elif totale_con_perdite <= 8.0:
-                    p3_attiva[quarto] = True
+                    p3_nominale[minuto_del_giorno] = True
                 else:
-                    p4_attiva[quarto] = True
-                    p3_attiva[quarto] = True
+                    p4_nominale[minuto_del_giorno] = True
+                    p3_nominale[minuto_del_giorno] = True
+
+        p4_attiva = [False] * 1440
+        p3_attiva = [False] * 1440
+        
+        p4_reale_prec = False
+        p3_reale_prec = False
+        
+        idx_m = 0
+        while idx_m < 1440:
+            p4_wants = p4_nominale[idx_m]
+            p3_wants = p3_nominale[idx_m]
+            
+            # REGOLA: Se si devono accendere INSIEME (ed erano entrambe spente al minuto precedente), la P4 parte 3 minuti dopo la P3
+            if p4_wants and p3_wants and not p4_reale_prec and not p3_reale_prec:
+                p3_attiva[idx_m] = True
+                p4_attiva[idx_m] = False
+                p3_reale_prec = True
+                p4_reale_prec = False
+                idx_m += 1
+                for _ in range(2): # mantieni il ritardo per i successivi 2 minuti (totale 3 minuti di offset)
+                    if idx_m < 1440:
+                        p3_attiva[idx_m] = p3_nominale[idx_m]
+                        p4_attiva[idx_m] = False
+                        p4_reale_prec = False
+                        p3_reale_prec = p3_attiva[idx_m]
+                        idx_m += 1
+                continue
+            
+            # REGOLA: Accensione ritardata per P3 se deve accendersi subito dopo lo spegnimento di P4
+            if p3_wants and not p4_wants and p4_reale_prec and not p3_reale_prec:
+                motori_attuali = motori_minuto_arr[idx_m]
+                # Se i motori sono tra 5 e 7 il ritardo è di 4 minuti, altrimenti di 2 minuti
+                ritardo_minuti = 4 if (5.0 <= motori_attuali <= 7.0) else 2
+                for _ in range(ritardo_minuti):
+                    if idx_m < 1440:
+                        p4_attiva[idx_m] = p4_nominale[idx_m]
+                        p3_attiva[idx_m] = False
+                        p3_reale_prec = False
+                        p4_reale_prec = p4_attiva[idx_m]
+                        idx_m += 1
+                continue
+                
+            # REGOLA: Se una delle due pompe è già funzionante, si possono attaccare senza problemi
+            p4_attiva[idx_m] = p4_wants
+            p3_attiva[idx_m] = p3_wants
+            p4_reale_prec = p4_attiva[idx_m]
+            p3_reale_prec = p3_attiva[idx_m]
+            idx_m += 1
 
         def unisci_fasce_orarie(array_presenza):
             fasce = []
             in_blocco = False
             inizio_blocco = None
             
-            for q in range(96):
-                if array_presenza[q] and not in_blocco:
+            for m_giorno in range(1440):
+                if array_presenza[m_giorno] and not in_blocco:
                     in_blocco = True
-                    h_ini = q // 4
-                    m_ini = (q % 4) * 15
+                    h_ini = m_giorno // 60
+                    m_ini = m_giorno % 60
                     inizio_blocco = f"{h_ini:02d}:{m_ini:02d}"
-                elif not array_presenza[q] and in_blocco:
+                elif not array_presenza[m_giorno] and in_blocco:
                     in_blocco = False
-                    h_fin = q // 4
-                    m_fin = (q % 4) * 15
+                    h_fin = m_giorno // 60
+                    m_fin = m_giorno % 60
                     fasce.append(f"⏱️ {inizio_blocco} — {h_fin:02d}:{m_fin:02d}")
             
             if in_blocco:
