@@ -54,7 +54,7 @@ def calcola_giri_chiavone(motori_totali, nome_chiavone):
         "2.00": {"giri": 3.75, "portata": 42.0}, "2.31": {"giri": 4.00, "portata": 49.0},
         "2.64": {"giri": 4.25, "portata": 55.0}, "3.00": {"giri": 4.50, "portata": 63.0},
         "3.34": {"giri": 4.75, "portata": 70.0}, "3.69": {"giri": 5.00, "portata": 77.0},
-        "4.03": {"giri": 5.25, "portata": 85.0}, "4.38": {"giri": 5.50, "portata": 92.0},
+        "4.03": {"giri": 5.25, "row": 85.0, "portata": 85.0}, "4.38": {"giri": 5.50, "portata": 92.0},
         "4.73": {"giri": 5.75, "portata": 99.0}, "5.07": {"giri": 6.00, "portata": 107.0},
         "5.41": {"giri": 6.25, "portata": 114.0}, "5.75": {"giri": 6.50, "portata": 121.0},
         "6.08": {"giri": 6.75, "portata": 128.0}, "6.40": {"giri": 7.00, "portata": 134.0},
@@ -94,24 +94,32 @@ def calcola_picco_massimo_giorno(df_giorno, data_rif):
         dt_ini = pd.to_datetime(turno['data_inizio_dt'])
         dt_fin = pd.to_datetime(turno['data_fine_dt'])
         
-        if dt_ini.date() < data_rif:
-            min_ini = 0
-        elif dt_ini.date() == data_rif:
-            min_ini = dt_ini.hour * 60 + dt_ini.minute
+        intervals = []
+        if dt_ini.date() == dt_fin.date() and dt_fin.time() < dt_ini.time():
+            intervals.append((datetime.combine(dt_ini.date(), dt_ini.time()), datetime.combine(dt_ini.date(), time(23, 59)) + timedelta(minutes=1)))
+            intervals.append((datetime.combine(dt_ini.date() + timedelta(days=1), time(0, 0)), datetime.combine(dt_ini.date() + timedelta(days=1), dt_fin.time())))
         else:
-            continue
+            intervals.append((dt_ini, dt_fin))
             
-        if dt_fin.date() > data_rif:
-            min_fin = 1440
-        elif dt_fin.date() == data_rif:
-            min_fin = dt_fin.hour * 60 + dt_fin.minute
-        else:
-            continue
+        for s_dt, e_dt in intervals:
+            if s_dt.date() < data_rif and e_dt.date() > data_rif:
+                min_ini, min_fin = 0, 1440
+            elif s_dt.date() == data_rif and e_dt.date() == data_rif:
+                min_ini = s_dt.hour * 60 + s_dt.minute
+                min_fin = e_dt.hour * 60 + e_dt.minute
+            elif s_dt.date() == data_rif and e_dt.date() > data_rif:
+                min_ini = s_dt.hour * 60 + s_dt.minute
+                min_fin = 1440
+            elif s_dt.date() < data_rif and e_dt.date() == data_rif:
+                min_ini = 0
+                min_fin = e_dt.hour * 60 + e_dt.minute
+            else:
+                continue
                 
-        for m in range(min_ini, min_fin):
-            if 0 <= m < 1440:
-                motori_minuto[m] += m_std
-                
+            for m in range(min_ini, min_fin):
+                if 0 <= m < 1440:
+                    motori_minuto[m] += m_std
+                    
     return max(motori_minuto)
 
 # --- FUNZIONE CORRETTA PER GENERARE LE FASCE ORARIE DEL TOTALE MOTORI AL MINUTO ---
@@ -128,24 +136,32 @@ def calcola_fasce_sovrapposte_giorno(df_giorno, data_rif):
         dt_ini = pd.to_datetime(turno['data_inizio_dt'])
         dt_fin = pd.to_datetime(turno['data_fine_dt'])
         
-        if dt_ini.date() < data_rif:
-            min_ini = 0
-        elif dt_ini.date() == data_rif:
-            min_ini = dt_ini.hour * 60 + dt_ini.minute
+        intervals = []
+        if dt_ini.date() == dt_fin.date() and dt_fin.time() < dt_ini.time():
+            intervals.append((datetime.combine(dt_ini.date(), dt_ini.time()), datetime.combine(dt_ini.date(), time(23, 59)) + timedelta(minutes=1)))
+            intervals.append((datetime.combine(dt_ini.date() + timedelta(days=1), time(0, 0)), datetime.combine(dt_ini.date() + timedelta(days=1), dt_fin.time())))
         else:
-            continue
+            intervals.append((dt_ini, dt_fin))
             
-        if dt_fin.date() > data_rif:
-            min_fin = 1440
-        elif dt_fin.date() == data_rif:
-            min_fin = dt_fin.hour * 60 + dt_fin.minute
-        else:
-            continue
+        for s_dt, e_dt in intervals:
+            if s_dt.date() < data_rif and e_dt.date() > data_rif:
+                min_ini, min_fin = 0, 1440
+            elif s_dt.date() == data_rif and e_dt.date() == data_rif:
+                min_ini = s_dt.hour * 60 + s_dt.minute
+                min_fin = e_dt.hour * 60 + e_dt.minute
+            elif s_dt.date() == data_rif and e_dt.date() > data_rif:
+                min_ini = s_dt.hour * 60 + s_dt.minute
+                min_fin = 1440
+            elif s_dt.date() < data_rif and e_dt.date() == data_rif:
+                min_ini = 0
+                min_fin = e_dt.hour * 60 + e_dt.minute
+            else:
+                continue
                 
-        for m in range(min_ini, min_fin):
-            if 0 <= m < 1440:
-                motori_minuto[m] += m_std
-                
+            for m in range(min_ini, min_fin):
+                if 0 <= m < 1440:
+                    motori_minuto[m] += m_std
+                    
     fasce = []
     if sum(motori_minuto) == 0:
         return fasce
