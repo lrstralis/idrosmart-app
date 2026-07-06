@@ -80,13 +80,13 @@ def calcola_motori_con_perdite(motori_nominali):
         return motori_nominali + 0.5
     return motori_nominali + 1.0
 
-# --- TROVA IL PICCO MASSIMO SOVRAPPOSTO MINUTO PER MINUTO ---
+# --- FUNZIONE NUOVA PER TROVARE IL PICCO MASSIMO SOVRAPPOSTO MINUTO PER MINUTO ---
 def calcola_picco_massimo_giorno(df_giorno, data_rif):
     if df_giorno.empty:
         return 0.0
     motori_minuto = [0.0] * 1440
     for _, turno in df_giorno.iterrows():
-        m_std = float(turno['motori_prenotati'])
+        m_std = float(turno['motori_std'])
         dt_ini = turno['data_inizio_dt']
         dt_fin = turno['data_fine_dt']
         
@@ -115,7 +115,7 @@ def calcola_fasce_sovrapposte_giorno(df_giorno, data_rif):
         return []
     
     for _, turno in df_giorno.iterrows():
-        m_std = float(turno['motori_prenotati'])
+        m_std = float(turno['motori_std'])
         dt_ini = turno['data_inizio_dt']
         dt_fin = turno['data_fine_dt']
         
@@ -175,19 +175,13 @@ def inizializza_tabelle_personalizzate():
             extra_fosso_sporco INTEGER DEFAULT 15, giorni_anticipo_manovra INTEGER DEFAULT 0
         )
     ''')
-    # Aggiunta colonna motori_std alla tabella prenotazioni se non esiste per salvare i motori specifici del turno
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS prenotazioni (
             id SERIAL PRIMARY KEY, irrigante_id INTEGER,
             data_ora_inizio TEXT, data_ora_fine TEXT, config_scelta TEXT, stato TEXT DEFAULT 'PROGRAMMATO',
-            motori_std REAL DEFAULT 1.0,
             FOREIGN KEY(irrigante_id) REFERENCES irriganti(id) ON DELETE CASCADE
         )
     ''')
-    try:
-        cursor.execute("ALTER TABLE prenotazioni ADD COLUMN motori_std REAL DEFAULT 1.0;")
-    except Exception:
-        pass
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS manovre_personalizzate (
             id SERIAL PRIMARY KEY, irrigante_id INTEGER,
@@ -233,10 +227,10 @@ def cancella_manovra_personalizzata(manovra_id):
     conn.commit()
     conn.close()
 
-def inserisci_prenotazione_avanzata(irrigante_id, inizio, fine, config, motori_scelti):
+def inserisci_prenotazione_avanzata(irrigante_id, inizio, fine, config):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute('INSERT INTO prenotazioni (irrigante_id, data_ora_inizio, data_ora_fine, config_scelta, motori_std) VALUES (%s, %s, %s, %s, %s)', (irrigante_id, inizio, fine, config, motori_scelti))
+    cursor.execute('INSERT INTO prenotazioni (irrigante_id, data_ora_inizio, data_ora_fine, config_scelta) VALUES (%s, %s, %s, %s)', (irrigante_id, inizio, fine, config))
     conn.commit()
     conn.close()
 
@@ -291,7 +285,7 @@ def selezionao_pompe_centrale(motori):
 
 def ottieni_colore_stato_semplice(motori_totali, rangoni_attivo):
     if motori_totali == 0: return "#A0A0A0", "🟢 IMPIANTO FERMO"
-    if motori_totali <= 5.0: colore_assegnato = "#28a745"
+    if motori_totali <= 6.0: colore_assegnato = "#28a745"  # Modificato limite da 5.0 a 6.0
     elif motori_totali <= 10.0: colore_assegnato = "#007bff"
     elif motori_totali <= 11.0: colore_assegnato = "#e83e8c"
     elif motori_totali <= 12.0: colore_assegnato = "#ffc107"
@@ -343,10 +337,8 @@ except Exception:
 
 engine = get_sqlalchemy_engine()
 df_irriganti = pd.read_sql_query(text("SELECT * FROM irriganti ORDER BY nome"), engine)
-
-# Carichiamo usando la colonna motori_std specifica della prenotazione (coalesce per vecchi dati)
 df_tutti_attivi = pd.read_sql_query(text('''
-    SELECT p.id, i.id AS irr_id, i.nome, COALESCE(p.motori_std, i.motori_std) AS motori_prenotati, i.zona, i.minuti_distanza, i.extra_fosso_sporco, i.giorni_anticipo_manovra,
+    SELECT p.id, i.id AS irr_id, i.nome, i.motori_std, i.zona, i.minuti_distanza, i.extra_fosso_sporco, i.giorni_anticipo_manovra,
            p.data_ora_inizio, p.data_ora_fine, p.config_scelta
     FROM prenotazioni p 
     LEFT JOIN irriganti i ON p.irrigante_id = i.id
@@ -399,8 +391,9 @@ if not df_tutti_attivi.empty:
             ora_fin_str = r['data_fine_dt'].strftime('%H:%M')
             if ora_fin_str in ["23:59", "00:00"]: ora_fin_str = "24:00"
             
-        irriganti_giorno_corrente.append({"id": r['id'], "nome": r['nome'], "fascia": f"{ora_inz_str} - {ora_fin_str}", "motori": r['motori_prenotati']})
+        irriganti_giorno_corrente.append({"id": r['id'], "nome": r['nome'], "fascia": f"{ora_inz_str} - {ora_fin_str}", "motori": r['motori_std']})
 
+# --- MODIFICATO: Calcolo dello stato idraulico corrente in base al Picco Massimo Sovrapposto ---
 df_giorno_attuale_global = df_tutti_attivi[(df_tutti_attivi['data_inizio_dt'].dt.date <= st.session_state.data_corrente) & (df_tutti_attivi['data_fine_dt'].dt.date >= st.session_state.data_corrente)].copy() if not df_tutti_attivi.empty else pd.DataFrame()
 motori_pre_perdite_global = calcola_picco_massimo_giorno(df_giorno_attuale_global, st.session_state.data_corrente)
 motori_giorno_global = calcola_motori_con_perdite(motori_pre_perdite_global)
@@ -441,6 +434,7 @@ with tab_home:
         nome_giorno_it = GIORNI_IT.get(giorno_loop.strftime("%A"), giorno_loop.strftime("%A"))
         df_loop_attivi = df_tutti_attivi[(df_tutti_attivi['data_inizio_dt'].dt.date <= giorno_loop) & (df_tutti_attivi['data_fine_dt'].dt.date >= giorno_loop)] if not df_tutti_attivi.empty else pd.DataFrame()
         
+        # --- MODIFICATO: Anche la griglia settimanale mostra il picco massimo di motori sovrapposti nel singolo giorno ---
         motori_loop_pre = calcola_picco_massimo_giorno(df_loop_attivi, giorno_loop)
         motori_loop = calcola_motori_con_perdite(motori_loop_pre)
         rangoni_loop = df_loop_attivi['nome'].str.contains("Rangoni", case=False).any() if not df_loop_attivi.empty else False
@@ -465,7 +459,7 @@ with tab_home:
                     
                     c_grid1, c_grid2 = st.columns([4, 1])
                     with c_grid1:
-                        st.markdown(f'<div style="background-color:#f8f9fa; padding:5px; border-radius:4px; margin-bottom:5px; border-left:3px solid #007bff; text-align:left;"><div style="font-size:12px; font-weight:bold; color:#212529;">{utenza["nome"]} ({utenza["motori_prenotati"]:.1f}M)</div><div style="font-size:11px; color:#495057; font-family:monospace;">⏱️ {h_inz}-{h_fin}</div></div>', unsafe_allow_html=True)
+                        st.markdown(f'<div style="background-color:#f8f9fa; padding:5px; border-radius:4px; margin-bottom:5px; border-left:3px solid #007bff; text-align:left;"><div style="font-size:12px; font-weight:bold; color:#212529;">{utenza["nome"]}</div><div style="font-size:11px; color:#495057; font-family:monospace;">⏱️ {h_inz}-{h_fin}</div></div>', unsafe_allow_html=True)
                     with c_grid2:
                         if st.button("❌", key=f"del_home_grid_{utenza['id']}_{giorno_loop.strftime('%d%m')}", help="Rimuovi questo turno"):
                             cancella_prenotazione(int(utenza['id']))
@@ -543,36 +537,24 @@ with tab_dashboard:
         motori_default = 1.0
         zona_default = irrigante_scelto if irrigante_scelto in ELENCO_CHIAVONI_REALI else "Valvola Contrappesi"
         
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("🕒 Programmazione Fasce Orarie")
-    num_fasce = st.sidebar.number_input("Quante fasce orarie vuoi inserire?", min_value=1, max_value=4, value=1, step=1)
-    
-    lista_ore = [f"{h:02d}:{m:02d}" for h in range(24) for m in [0, 15, 30, 45]] + ["24:00"]
-    dati_fasce_inserite = []
-    
-    for f in range(int(num_fasce)):
-        st.sidebar.markdown(f"**Fascia Oraria {f+1}**")
-        c_f1, c_f2 = st.sidebar.columns(2)
-        with c_f1:
-            ora_inz_f = st.selectbox(f"Ora Inizio F{f+1}:", lista_ore, index=32, key=f"sb_ora_inz_{f}")
-        with c_f2:
-            ora_fin_f = st.selectbox(f"Ora Fine F{f+1}:", lista_ore, index=48, key=f"sb_ora_fin_{f}")
-            
-        motori_f = st.sidebar.number_input(f"Motori Fascia {f+1} (M):", min_value=0.0, max_value=12.0, value=motori_default, step=0.01, key=f"sb_motori_f_{f}")
-        
-        if tipo_pesca_scelta == "Fosso" or tipo_elemento_scelto == "Chiavoni":
-            giri_calc_f, _ = calcola_giri_chiavone(motori_f, zona_default)
-            st.sidebar.caption(f"⚙️ Giri Chiavone stimati: **{giri_calc_f:.2f}**")
-            
-        dati_fasce_inserite.append({"inizio": ora_inz_f, "fine": ora_fin_f, "motori": motori_f})
+    if tipo_pesca_scelta == "Fosso" or tipo_elemento_scelto == "Chiavoni":
+        motori_scelti_sb = st.sidebar.number_input("Motori totali da far uscire (M):", min_value=0.0, max_value=12.0, value=motori_default, step=0.01, key=f"motori_input_{irrigante_scelto}")
+        giri_calc_sb, _ = calcola_giri_chiavone(motori_scelti_sb, zona_default)
+        st.sidebar.info(f"⚙️ Giri Chiavone calcolati a fianco: **{giri_calc_sb:.2f} Giri**")
+    else:
+        motori_scelti_sb = motori_default
         
     st.sidebar.markdown("---")
-    st.sidebar.subheader("📅 Frequenza e Ripetizione")
+    st.sidebar.subheader("📅 Frequenza e Giorni di Ripetizione")
     giorni_ripetizione = st.sidebar.multiselect("Seleziona i giorni della settimana per ripetere il turno:", GIORNI_SETTIMANA_LISTA)
     
     disabilita_date = len(giorni_ripetizione) > 0
     data_inizio = st.sidebar.date_input("Dal giorno:", datetime.now(), disabled=disabilita_date)
+    
+    lista_ore = [f"{h:02d}:{m:02d}" for h in range(24) for m in [0, 15, 30, 45]] + ["24:00"]
+    ora_inizio_str = st.sidebar.selectbox("Ora Inizio:", lista_ore, index=32) 
     data_fine = st.sidebar.date_input("Al giorno:", datetime.now(), disabled=disabilita_date)
+    ora_fine_str = st.sidebar.selectbox("Ora Fine:", lista_ore, index=48) 
     
     st.sidebar.markdown("---")
     fosso_sporco_attivo = st.sidebar.checkbox("⚠️ Segnala Fosso Sporco")
@@ -582,12 +564,11 @@ with tab_dashboard:
             st.sidebar.error("Seleziona un elemento valido!")
         else:
             if id_irrigante_db is not None:
-                # Aggiorniamo l'anagrafica di base usando i motori dell'ultima fascia o tenendo quella di default
-                aggiorna_irrigante_completo(id_irrigante_db, irrigante_scelto, zona_default, tipo_prelievo_default, dati_fasce_inserite[0]["motori"], 30, 15, 0)
+                aggiorna_irrigante_completo(id_irrigante_db, irrigante_scelto, zona_default, tipo_prelievo_default, motori_scelti_sb, 30, 15, 0)
             else:
                 zona_ins = zona_default
                 prelievo_ins = "Fosso" if irrigante_scelto in ELENCO_CHIAVONI_REALI else tipo_pesca_scelta
-                id_irrigante_db = inserisci_irrigante_completo(irrigante_scelto, zona_ins, prelievo_ins, dati_fasce_inserite[0]["motori"], 30, 15, 0)
+                id_irrigante_db = inserisci_irrigante_completo(irrigante_scelto, zona_ins, prelievo_ins, motori_scelti_sb, 30, 15, 0)
                 
             lista_coppie_date = []
             if disabilita_date:
@@ -600,34 +581,13 @@ with tab_dashboard:
             else:
                 lista_coppie_date.append((data_inizio, data_fine))
                 
+            salva_ora_fine = "23:59" if ora_fine_str == "24:00" else ora_fine_str
             config_salv = "Fosso" if irrigante_scelto in ELENCO_CHIAVONI_REALI else tipo_pesca_scelta
                 
             for d_ini, d_fin in lista_coppie_date:
-                for fascia_p in dati_fasce_inserite:
-                    h_inz_str = fascia_p["inizio"]
-                    h_fin_str = fascia_p["fine"]
-                    motori_salva = fascia_p["motori"]
-                    
-                    # Logica passaggio notturno: Se ora fine <= ora inizio (es. 22:00 -> 06:00), spezziamo il turno
-                    p_inz_sec = int(h_inz_str.split(':')[0]) * 60 + int(h_inz_str.split(':')[1])
-                    p_fin_sec = 1440 if h_fin_str == "24:00" else int(h_fin_str.split(':')[0]) * 60 + int(h_fin_str.split(':')[1])
-                    
-                    if p_fin_sec <= p_inz_sec:
-                        # Giorno corrente: inizio -> 23:59
-                        inizio_completo_1 = f"{d_ini.strftime('%Y-%m-%d')} {h_inz_str}"
-                        fine_completo_1 = f"{d_ini.strftime('%Y-%m-%d')} 23:59"
-                        inserisci_prenotazione_avanzata(id_irrigante_db, inizio_completo_1, fine_completo_1, config_salv, motori_salva)
-                        
-                        # Giorno successivo: 00:00 -> fine prevista
-                        giorno_succ = d_fin + timedelta(days=1)
-                        inizio_completo_2 = f"{giorno_succ.strftime('%Y-%m-%d')} 00:00"
-                        fine_completo_2 = f"{giorno_succ.strftime('%Y-%m-%d')} {'23:59' if h_fin_str == '24:00' else h_fin_str}"
-                        inserisci_prenotazione_avanzata(id_irrigante_db, inizio_completo_2, fine_completo_2, config_salv, motori_salva)
-                    else:
-                        salva_ora_fine = "23:59" if h_fin_str == "24:00" else h_fin_str
-                        inizio_completo = f"{d_ini.strftime('%Y-%m-%d')} {h_inz_str}"
-                        fine_completo = f"{d_fin.strftime('%Y-%m-%d')} {salva_ora_fine}"
-                        inserisci_prenotazione_avanzata(id_irrigante_db, inizio_completo, fine_completo, config_salv, motori_salva)
+                inizio_completo = f"{d_ini.strftime('%Y-%m-%d')} {ora_inizio_str}"
+                fine_completo = f"{d_fin.strftime('%Y-%m-%d')} {salva_ora_fine}"
+                inserisci_prenotazione_avanzata(id_irrigante_db, inizio_completo, fine_completo, config_salv)
                 
             st.sidebar.success("Turni registrati correttamente!")
             st.rerun()
@@ -666,6 +626,7 @@ with tab_dashboard:
     df_giorno_attivi = df_tutti_attivi[(df_tutti_attivi['data_inizio_dt'].dt.date <= st.session_state.data_corrente) & (df_tutti_attivi['data_fine_dt'].dt.date >= st.session_state.data_corrente)].copy() if not df_tutti_attivi.empty else pd.DataFrame()
     rangoni_oggi = df_giorno_attivi['nome'].str.contains("Rangoni", case=False).any() if not df_giorno_attivi.empty else False
 
+    # --- MODIFICATO: Calcolo basato sul picco massimo anche nella dashboard ---
     motori_pre_perdite = calcola_picco_massimo_giorno(df_giorno_attivi, st.session_state.data_corrente)
     motori_giorno = calcola_motori_con_perdite(motori_pre_perdite)
     testo_pompe, _ = selezionao_pompe_centrale(motori_giorno)
@@ -703,7 +664,7 @@ with tab_dashboard:
     else:
         righe_tabella = []
         for idx, r in df_giorno_attivi.iterrows():
-            _, portata_s = calcola_giri_chiavone(r['motori_prenotati'], r['zona'])
+            _, portata_s = calcola_giri_chiavone(r['motori_std'], r['zona'])
             
             h_inz_tab = "00:00" if r['data_inizio_dt'].date() < st.session_state.data_corrente else r['data_inizio_dt'].strftime('%H:%M')
             h_fin_tab = "24:00" if r['data_fine_dt'].date() > st.session_state.data_corrente else r['data_fine_dt'].strftime('%H:%M')
@@ -712,7 +673,7 @@ with tab_dashboard:
             righe_tabella.append({
                 "Azienda Agricola / Contadino": r['nome'], "Zona Idraulica": r['zona'],
                 "Fascia Oraria": f"{h_inz_tab} - {h_fin_tab}",
-                "Modalità": r['config_scelta'], "Carico Richiesto (Motori M)": f"{r['motori_prenotati']:.2f} M", "Portata (l/s)": f"{portata_s:.0f} l/s"
+                "Modalità": r['config_scelta'], "Carico Richiesto (Motori M)": f"{r['motori_std']:.2f} M", "Portata (l/s)": f"{portata_s:.0f} l/s"
             })
         st.table(pd.DataFrame(righe_tabella))
         
@@ -723,7 +684,7 @@ with tab_dashboard:
                 h_inz_tab = "00:00" if r['data_inizio_dt'].date() < st.session_state.data_corrente else r['data_inizio_dt'].strftime('%H:%M')
                 h_fin_tab = "24:00" if r['data_fine_dt'].date() > st.session_state.data_corrente else r['data_fine_dt'].strftime('%H:%M')
                 if h_fin_tab in ["23:59", "00:00"]: h_fin_tab = "24:00"
-                st.write(f"🚜 Turno: **{r['nome']}** | Orario: {h_inz_tab} - {h_fin_tab} ({r['zona']}) | Richiesti: **{r['motori_prenotati']:.2f} M**")
+                st.write(f"🚜 Turno: **{r['nome']}** | Orario: {h_inz_tab} - {h_fin_tab} ({r['zona']}) | Modalità: *{r['config_scelta']}*")
             with c_del2:
                 if st.button("🗑️ Rimuovi", key=f"del_dash_{r['id']}", use_container_width=True):
                     cancella_prenotazione(int(r['id']))
@@ -857,7 +818,7 @@ with tab_sala_macchine:
                         limite_fine = datetime.combine(limite_fine.date(), time(23, 59, 59))
                         
                     if turno['data_inizio_dt'] < tempo_minuto_fine and limite_fine >= tempo_minuto_inizio:
-                        motori_min += float(turno['motori_prenotati'])
+                        motori_min += float(turno['motori_std'])
             
             motori_minuto_arr[minuto_del_giorno] = motori_min
             
@@ -903,7 +864,7 @@ with tab_sala_macchine:
             if p3_wants and not p4_wants and p4_reale_prec and not p3_reale_prec:
                 motori_attuali = motori_minuto_arr[idx_m]
                 motori_con_perdite_ist = calcola_motori_con_perdite(motori_attuali)
-                ritardo_minuti = 4 if (5.0 <= motori_con_perdite_ist <= 7.0) else 2
+                ritardo_minuti = 4 if (6.0 <= motori_con_perdite_ist <= 7.0) else 2  # Allineato ritardo a soglia 6.0
                 for _ in range(ritardo_minuti):
                     if idx_m < 1440:
                         p4_attiva[idx_m] = p4_nominale[idx_m]
@@ -967,7 +928,7 @@ with tab_anagrafica:
         n_prelievo = st.selectbox("Prelievo Standard", ["Fosso", "Diretta"], key="ins_prelievo")
         is_diretta_ins = (n_prelievo == "Diretta")
         n_zona = st.selectbox("Nodo Idraulico Associato", ELENCO_CHIAVONI_REALI, index=0, disabled=is_diretta_ins, key="ins_zona")
-        n_motori = st.number_input("Motori assorbiti di default (M)", min_value=0.0, max_value=12.0, value=1.0, step=0.1, key="ins_motori")
+        n_motori = st.number_input("Motori assorbiti (M)", min_value=0.0, max_value=12.0, value=1.0, step=0.1, key="ins_motori")
         n_distanza = st.number_input("Minuti di distanza per apertura:", min_value=0, max_value=180, value=30, key="ins_distanza")
         n_extra_fosso = st.number_input("Minuti Extra Fosso Sporco:", min_value=0, max_value=120, value=15, key="ins_extra")
         n_giorni_ant = st.selectbox("Giorni pre-anticipo manovre:", [0, 1, 2], key="ins_giorni_ant")
@@ -1019,7 +980,7 @@ with tab_anagrafica:
                 zona_corrente_db = str(dati_c['zona'])
                 zona_preimpostata_selectbox = zona_corrente_db if zona_corrente_db in ELENCO_CHIAVONI_REALI else ELENCO_CHIAVONI_REALI[0]
                 m_zona = st.selectbox("Chiavone Reale Associato", ELENCO_CHIAVONI_REALI, index=ELENCO_CHIAVONI_REALI.index(zona_preimpostata_selectbox), disabled=is_diretta_mod)
-                m_motori = st.number_input("Motori base (M)", min_value=0.0, max_value=12.0, value=float(dati_c['motori_std']))
+                m_motori = st.number_input("Motori (M)", min_value=0.0, max_value=12.0, value=float(dati_c['motori_std']))
                 m_distanza = st.number_input("Minuti di distanza:", min_value=0, max_value=180, value=int(dati_c['minuti_distanza']))
                 m_extra_fosso = st.number_input("Minuti Extra Fosso:", min_value=0, max_value=180, value=int(dati_c['extra_fosso_sporco']))
                 m_giorni_ant = st.selectbox("Giorni anticipo:", [0, 1, 2], index=int(dati_c['giorni_anticipo_manovra']) if dati_c['giorni_anticipo_manovra'] in [0,1,2] else 0)
