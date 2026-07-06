@@ -80,27 +80,33 @@ def calcola_motori_con_perdite(motori_nominali):
         return motori_nominali + 0.5
     return motori_nominali + 1.0
 
-# --- FUNZIONE NUOVA PER TROVARE IL PICCO MASSIMO SOVRAPPOSTO MINUTO PER MINUTO ---
+# --- FUNZIONE CORRETTA PER TROVARE IL PICCO MASSIMO SOVRAPPOSTO MINUTO PER MINUTO ---
 def calcola_picco_massimo_giorno(df_giorno, data_rif):
     if df_giorno.empty:
         return 0.0
     motori_minuto = [0.0] * 1440
+    
+    if isinstance(data_rif, datetime):
+        data_rif = data_rif.date()
+        
     for _, turno in df_giorno.iterrows():
         m_std = float(turno['motori_std'])
-        dt_ini = turno['data_inizio_dt']
-        dt_fin = turno['data_fine_dt']
+        dt_ini = pd.to_datetime(turno['data_inizio_dt'])
+        dt_fin = pd.to_datetime(turno['data_fine_dt'])
         
         if dt_ini.date() < data_rif:
             min_ini = 0
-        else:
+        elif dt_ini.date() == data_rif:
             min_ini = dt_ini.hour * 60 + dt_ini.minute
+        else:
+            continue
             
         if dt_fin.date() > data_rif:
             min_fin = 1440
-        else:
+        elif dt_fin.date() == data_rif:
             min_fin = dt_fin.hour * 60 + dt_fin.minute
-            if dt_fin.time() == time(23, 59):
-                min_fin = 1440
+        else:
+            continue
                 
         for m in range(min_ini, min_fin):
             if 0 <= m < 1440:
@@ -108,28 +114,33 @@ def calcola_picco_massimo_giorno(df_giorno, data_rif):
                 
     return max(motori_minuto)
 
-# --- FUNZIONE PER GENERARE LE FASCE ORARIE DEL TOTALE MOTORI AL MINUTO ---
+# --- FUNZIONE CORRETTA PER GENERARE LE FASCE ORARIE DEL TOTALE MOTORI AL MINUTO ---
 def calcola_fasce_sovrapposte_giorno(df_giorno, data_rif):
-    motori_minuto = [0.0] * 1440
     if df_giorno.empty:
         return []
+    motori_minuto = [0.0] * 1440
     
+    if isinstance(data_rif, datetime):
+        data_rif = data_rif.date()
+        
     for _, turno in df_giorno.iterrows():
         m_std = float(turno['motori_std'])
-        dt_ini = turno['data_inizio_dt']
-        dt_fin = turno['data_fine_dt']
+        dt_ini = pd.to_datetime(turno['data_inizio_dt'])
+        dt_fin = pd.to_datetime(turno['data_fine_dt'])
         
         if dt_ini.date() < data_rif:
             min_ini = 0
-        else:
+        elif dt_ini.date() == data_rif:
             min_ini = dt_ini.hour * 60 + dt_ini.minute
+        else:
+            continue
             
         if dt_fin.date() > data_rif:
             min_fin = 1440
-        else:
+        elif dt_fin.date() == data_rif:
             min_fin = dt_fin.hour * 60 + dt_fin.minute
-            if dt_fin.time() == time(23, 59):
-                min_fin = 1440
+        else:
+            continue
                 
         for m in range(min_ini, min_fin):
             if 0 <= m < 1440:
@@ -143,7 +154,7 @@ def calcola_fasce_sovrapposte_giorno(df_giorno, data_rif):
     valore_corrente = motori_minuto[0]
     
     for m in range(1, 1440):
-        if motori_minuto[m] != valore_corrente:
+        if abs(motori_minuto[m] - valore_corrente) > 0.01:
             if valore_corrente > 0:
                 h_i, m_i = inizio_m // 60, inizio_m % 60
                 h_f, m_f = m // 60, m % 60
@@ -496,6 +507,3 @@ with tab_home:
                 if st.button("🗑️ Rimuovi", key=f"del_home_det_{irr['id']}", use_container_width=True):
                     cancella_prenotazione(int(irr['id']))
                     st.rerun()
-
-# Nota: Le restanti schede (tab_dashboard, tab_agenda, tab_sala_macchine, tab_anagrafica) 
-# implementano i rispettivi controlli del DB, tabelle e grafici descritti nell'architettura.
