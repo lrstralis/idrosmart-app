@@ -285,7 +285,7 @@ def selezionao_pompe_centrale(motori):
 
 def ottieni_colore_stato_semplice(motori_totali, rangoni_attivo):
     if motori_totali == 0: return "#A0A0A0", "🟢 IMPIANTO FERMO"
-    if motori_totali <= 5.0: colore_assegnato = "#28a745"
+    if motori_totali <= 6.0: colore_assegnato = "#28a745"  # Modificato limite da 5.0 a 6.0
     elif motori_totali <= 10.0: colore_assegnato = "#007bff"
     elif motori_totali <= 11.0: colore_assegnato = "#e83e8c"
     elif motori_totali <= 12.0: colore_assegnato = "#ffc107"
@@ -864,7 +864,7 @@ with tab_sala_macchine:
             if p3_wants and not p4_wants and p4_reale_prec and not p3_reale_prec:
                 motori_attuali = motori_minuto_arr[idx_m]
                 motori_con_perdite_ist = calcola_motori_con_perdite(motori_attuali)
-                ritardo_minuti = 4 if (5.0 <= motori_con_perdite_ist <= 7.0) else 2
+                ritardo_minuti = 4 if (6.0 <= motori_con_perdite_ist <= 7.0) else 2  # Allineato ritardo a soglia 6.0
                 for _ in range(ritardo_minuti):
                     if idx_m < 1440:
                         p4_attiva[idx_m] = p4_nominale[idx_m]
