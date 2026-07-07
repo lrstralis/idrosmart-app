@@ -23,18 +23,19 @@ ELENCO_CHIAVONI_REALI = ["Valvola Contrappesi", "Dogaro di Ravarino", "Piave 1",
 if "manovre_temporanee_registrazione" not in st.session_state:
     st.session_state.manovre_temporanee_registrazione = []
 
-# --- FUNZIONE DI CONNESSIONE SICURA CON POSTGRESQL (NEON) ---
+# --- CONNESSIONE SICURA E OTTIMIZZATA CON CACHE DEI COMPONENTI DI RETE ---
 def get_db_connection():
     db_url = st.secrets["connections"]["postgresql"]["url"]
     return psycopg2.connect(db_url)
 
+@st.cache_resource
 def get_sqlalchemy_engine():
     db_url = st.secrets["connections"]["postgresql"]["url"]
     if db_url.startswith("postgresql://"):
         db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
     return create_engine(db_url)
 
-# --- FUNZIONI DI LETTURA CON CACHE PER VELOCIZZARE L'APPLICAZIONE ---
+# --- FUNZIONI DI LETTURA CON STREAMLIT CACHE DATA (FULMINEE) ---
 @st.cache_data
 def get_cached_irriganti():
     engine = get_sqlalchemy_engine()
@@ -109,7 +110,7 @@ def calcola_motori_con_perdite(motori_nominali):
         return motori_nominali + 0.5
     return motori_nominali + 1.0
 
-# --- FUNZIONE NUOVA PER TROVARE IL PICCO MASSIMO SOVRAPPOSTO MINUTO PER MINUTO ---
+# --- FUNZIONE PER TROVARE IL PICCO MASSIMO SOVRAPPOSTO MINUTO PER MINUTO ---
 def calcola_picco_massimo_giorno(df_giorno, data_rif):
     if df_giorno.empty:
         return 0.0
@@ -231,18 +232,18 @@ def inserisci_irrigante_completo(nome, zona, prelievo, motori, distanza, extra_f
     id_generato = cursor.fetchone()[0]
     conn.commit()
     conn.close()
-    st.cache_data.clear() # Svuota la cache ad ogni modifica
+    st.cache_data.clear() # SVUOTA LA CACHE SOLO QUANDO AVVIENE UNA MODIFICA REALE
     return id_generato
 
 def aggiorna_irrigante_completo(id_irr, nome, zona, prelievo, motori, distanza, extra_fosso, giorni_ant):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
-        UPDATE irriganti SET nome=%s, zona=%s, tipo_prelievo=%s, motori_std=%s, minutes_distanza=%s, extra_fosso_sporco=%s, giorni_anticipo_manovra=%s WHERE id=%s
+        UPDATE irriganti SET nome=%s, zona=%s, tipo_prelievo=%s, motori_std=%s, minuti_distanza=%s, extra_fosso_sporco=%s, giorni_anticipo_manovra=%s WHERE id=%s
     ''', (nome, zona, prelievo, motori, distanza, extra_fosso, giorni_ant, id_irr))
     conn.commit()
     conn.close()
-    st.cache_data.clear() # Svuota la cache ad ogni modifica
+    st.cache_data.clear() # SVUOTA LA CACHE SOLO QUANDO AVVIENE UNA MODIFICA REALE
 
 def inserisci_manovra_personalizzata(irr_id, desc, val, unita):
     conn = get_db_connection()
@@ -250,7 +251,7 @@ def inserisci_manovra_personalizzata(irr_id, desc, val, unita):
     cursor.execute('INSERT INTO manovre_personalizzate (irrigante_id, descrizione, valore_anticipo, unita_anticipo) VALUES (%s, %s, %s, %s)', (irr_id, desc, val, unita))
     conn.commit()
     conn.close()
-    st.cache_data.clear() # Svuota la cache ad ogni modifica
+    st.cache_data.clear() # SVUOTA LA CACHE SOLO QUANDO AVVIENE UNA MODIFICA REALE
 
 def cancella_manovra_personalizzata(manovra_id):
     conn = get_db_connection()
@@ -258,7 +259,7 @@ def cancella_manovra_personalizzata(manovra_id):
     cursor.execute('DELETE FROM manovre_personalizzate WHERE id = %s', (manovra_id,))
     conn.commit()
     conn.close()
-    st.cache_data.clear() # Svuota la cache ad ogni modifica
+    st.cache_data.clear() # SVUOTA LA CACHE SOLO QUANDO AVVIENE UNA MODIFICA REALE
 
 def inserisci_prenotazione_avanzata(irrigante_id, inizio, fine, config):
     conn = get_db_connection()
@@ -266,7 +267,7 @@ def inserisci_prenotazione_avanzata(irrigante_id, inizio, fine, config):
     cursor.execute('INSERT INTO prenotazioni (irrigante_id, data_ora_inizio, data_ora_fine, config_scelta) VALUES (%s, %s, %s, %s)', (irrigante_id, inizio, fine, config))
     conn.commit()
     conn.close()
-    st.cache_data.clear() # Svuota la cache ad ogni modifica
+    st.cache_data.clear() # SVUOTA LA CACHE SOLO QUANDO AVVIENE UNA MODIFICA REALE
 
 def cancella_prenotazione(id_prenotazione):
     conn = get_db_connection()
@@ -274,7 +275,7 @@ def cancella_prenotazione(id_prenotazione):
     cursor.execute("DELETE FROM prenotazioni WHERE id = %s", (id_prenotazione,))
     conn.commit()
     conn.close()
-    st.cache_data.clear() # Svuota la cache ad ogni modifica
+    st.cache_data.clear() # SVUOTA LA CACHE SOLO QUANDO AVVIENE UNA MODIFICA REALE
 
 def cancella_turni_settimana(data_rif):
     inizio_sett = data_rif - timedelta(days=data_rif.weekday())
@@ -288,7 +289,7 @@ def cancella_turni_settimana(data_rif):
     ''', (str(inizio_sett), str(fine_sett)))
     conn.commit()
     conn.close()
-    st.cache_data.clear() # Svuota la cache ad ogni modifica
+    st.cache_data.clear() # SVUOTA LA CACHE SOLO QUANDO AVVIENE UNA MODIFICA REALE
 
 def cancella_turni_mese(data_rif):
     anno_mese = data_rif.strftime("%Y-%m")
@@ -297,7 +298,7 @@ def cancella_turni_mese(data_rif):
     cursor.execute("DELETE FROM prenotazioni WHERE substring(data_ora_inizio from 1 for 7) = %s", (anno_mese,))
     conn.commit()
     conn.close()
-    st.cache_data.clear() # Svuota la cache ad ogni modifica
+    st.cache_data.clear() # SVUOTA LA CACHE SOLO QUANDO AVVIENE UNA MODIFICA REALE
 
 def cancella_turni_generale():
     conn = get_db_connection()
@@ -305,7 +306,7 @@ def cancella_turni_generale():
     cursor.execute("DELETE FROM prenotazioni")
     conn.commit()
     conn.close()
-    st.cache_data.clear() # Svuota la cache ad ogni modifica
+    st.cache_data.clear() # SVUOTA LA CACHE SOLO QUANDO AVVIENE UNA MODIFICA REALE
 
 def cancella_turni_specifico_irrigante(id_irr):
     conn = get_db_connection()
@@ -313,7 +314,7 @@ def cancella_turni_specifico_irrigante(id_irr):
     cursor.execute("DELETE FROM prenotazioni WHERE irrigante_id = %s", (id_irr,))
     conn.commit()
     conn.close()
-    st.cache_data.clear() # Svuota la cache ad ogni modifica
+    st.cache_data.clear() # SVUOTA LA CACHE SOLO QUANDO AVVIENE UNA MODIFICA REALE
 
 def selezionao_pompe_centrale(motori):
     if motori == 0: return "IMPIANTO FERMO", []
@@ -374,7 +375,7 @@ try:
 except Exception:
     pass
 
-# Richiamo delle funzioni caricate in cache
+# Richiamo immediato e fulmineo dei dati cachati
 df_irriganti = get_cached_irriganti()
 df_tutti_attivi = get_cached_tutti_attivi()
 
@@ -514,7 +515,7 @@ with tab_home:
     st.markdown("---")
     st.markdown(f"### 📋 Foglio Giornaliero Dettagliato del **{st.session_state.data_corrente.strftime('%d/%m/%Y')}**")
     if not irriganti_giorno_corrente:
-        st.info("Nessun irrigante attivo programmato per questa giornata.")
+        st.info("Nessun irrigante attivo programmato for questa giornata.")
     else:
         for irr in irriganti_giorno_corrente:
             col_info, col_totale, col_remove_h = st.columns([3, 1, 0.5])
@@ -550,17 +551,12 @@ with tab_dashboard:
         
     irrigante_scelto = st.sidebar.selectbox("Seleziona Contadino / Chiavone", opzioni_sb)
     
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, zona, tipo_prelievo, motori_std FROM irriganti WHERE nome = %s", (irrigante_scelto,))
-    riga_esistente = cursor.fetchone()
-    conn.close()
-
-    if riga_esistente:
-        id_irrigante_db = int(riga_esistente[0])
-        zona_default = riga_esistente[1]
-        tipo_prelievo_default = riga_esistente[2]
-        motori_default = float(riga_esistente[3])
+    if not df_irriganti.empty and irrigante_scelto in df_irriganti['nome'].values:
+        riga_esistente = df_irriganti[df_irriganti['nome'] == irrigante_scelto].iloc[0]
+        id_irrigante_db = int(riga_esistente['id'])
+        zona_default = riga_esistente['zona']
+        tipo_prelievo_default = riga_esistente['tipo_prelievo']
+        motori_default = float(riga_esistente['motori_std'])
     else:
         id_irrigante_db = None
         tipo_prelievo_default = "Fosso" if tipo_elemento_scelto == "Chiavoni" else "Diretta"
@@ -742,7 +738,7 @@ with tab_agenda:
         st.info("Nessuna manovra presente nel sistema.")
     else:
         manovre_totali = []
-        df_manovre_p = get_cached_manovre_personalizzate() # Utilizzo della cache
+        df_manovre_p = get_cached_manovre_personalizzate()
 
         for idx, row in df_tutti_attivi.iterrows():
             in_dt = row['data_inizio_dt']
@@ -842,7 +838,7 @@ with tab_sala_macchine:
         for minuto_del_giorno in range(1440):
             ora = minuto_del_giorno // 60
             minuto = minuto_del_giorno % 60
-            tempo_minuto_inizio = datetime.combine(giorno_esaminato, time(ora, minuto))
+            tempo_minuto_inizio = datetime.combine(giorno_esaminato, time(ora, minute))
             tempo_minuto_fine = tempo_minuto_inizio + timedelta(minutes=1)
             
             motori_min = 0.0
@@ -1035,10 +1031,10 @@ with tab_anagrafica:
                 if st.form_submit_button("➕ Aggiungi Manovra a questo Profilo"):
                     if desc_manovra:
                         inserisci_manovra_personalizzata(id_selezionato, desc_manovra, val_manovra, unita_manovra)
-                        st.success("Manovra aggiunto!")
+                        st.success("Manovra aggiunta!")
                         st.rerun()
 
-            df_m_salvate = get_cached_manovre_specifiche(id_selezionato) # Utilizzo della cache
+            df_m_salvate = get_cached_manovre_specifiche(id_selezionato)
             if not df_m_salvate.empty:
                 st.caption("Manovre registrate attive per questo profilo:")
                 for _, m_salv in df_m_salvate.iterrows():
