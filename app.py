@@ -34,6 +34,35 @@ def get_sqlalchemy_engine():
         db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
     return create_engine(db_url)
 
+# --- FUNZIONI DI LETTURA CON CACHE PER VELOCIZZARE L'APPLICAZIONE ---
+@st.cache_data
+def get_cached_irriganti():
+    engine = get_sqlalchemy_engine()
+    return pd.read_sql_query(text("SELECT * FROM irriganti ORDER BY nome"), engine)
+
+@st.cache_data
+def get_cached_tutti_attivi():
+    engine = get_sqlalchemy_engine()
+    return pd.read_sql_query(text('''
+        SELECT p.id, i.id AS irr_id, i.nome, i.motori_std, i.zona, i.minuti_distanza, i.extra_fosso_sporco, i.giorni_anticipo_manovra,
+               p.data_ora_inizio, p.data_ora_fine, p.config_scelta
+        FROM prenotazioni p 
+        LEFT JOIN irriganti i ON p.irrigante_id = i.id
+        WHERE p.stato = 'PROGRAMMATO' AND i.id IS NOT NULL
+        ORDER BY p.data_ora_inizio ASC
+    '''), engine)
+
+@st.cache_data
+def get_cached_manovre_personalizzate():
+    engine = get_sqlalchemy_engine()
+    return pd.read_sql_query(text("SELECT * FROM manovre_personalizzate"), engine)
+
+@st.cache_data
+def get_cached_manovre_specifiche(id_selezionato):
+    engine = get_sqlalchemy_engine()
+    return pd.read_sql_query(text("SELECT * FROM manovre_personalizzate WHERE irrigante_id = :id"), engine, params={"id": int(id_selezionato)})
+
+
 # --- FUNZIONE DI CALCOLO GIRI CHIAVONE BASATA SULLA TABELLA UNIFICATA ---
 def calcola_giri_chiavone(motori_totali, nome_chiavone):
     try:
@@ -202,16 +231,18 @@ def inserisci_irrigante_completo(nome, zona, prelievo, motori, distanza, extra_f
     id_generato = cursor.fetchone()[0]
     conn.commit()
     conn.close()
+    st.cache_data.clear() # Svuota la cache ad ogni modifica
     return id_generato
 
 def aggiorna_irrigante_completo(id_irr, nome, zona, prelievo, motori, distanza, extra_fosso, giorni_ant):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
-        UPDATE irriganti SET nome=%s, zona=%s, tipo_prelievo=%s, motori_std=%s, minuti_distanza=%s, extra_fosso_sporco=%s, giorni_anticipo_manovra=%s WHERE id=%s
+        UPDATE irriganti SET nome=%s, zona=%s, tipo_prelievo=%s, motori_std=%s, minutes_distanza=%s, extra_fosso_sporco=%s, giorni_anticipo_manovra=%s WHERE id=%s
     ''', (nome, zona, prelievo, motori, distanza, extra_fosso, giorni_ant, id_irr))
     conn.commit()
     conn.close()
+    st.cache_data.clear() # Svuota la cache ad ogni modifica
 
 def inserisci_manovra_personalizzata(irr_id, desc, val, unita):
     conn = get_db_connection()
@@ -219,6 +250,7 @@ def inserisci_manovra_personalizzata(irr_id, desc, val, unita):
     cursor.execute('INSERT INTO manovre_personalizzate (irrigante_id, descrizione, valore_anticipo, unita_anticipo) VALUES (%s, %s, %s, %s)', (irr_id, desc, val, unita))
     conn.commit()
     conn.close()
+    st.cache_data.clear() # Svuota la cache ad ogni modifica
 
 def cancella_manovra_personalizzata(manovra_id):
     conn = get_db_connection()
@@ -226,6 +258,7 @@ def cancella_manovra_personalizzata(manovra_id):
     cursor.execute('DELETE FROM manovre_personalizzate WHERE id = %s', (manovra_id,))
     conn.commit()
     conn.close()
+    st.cache_data.clear() # Svuota la cache ad ogni modifica
 
 def inserisci_prenotazione_avanzata(irrigante_id, inizio, fine, config):
     conn = get_db_connection()
@@ -233,6 +266,7 @@ def inserisci_prenotazione_avanzata(irrigante_id, inizio, fine, config):
     cursor.execute('INSERT INTO prenotazioni (irrigante_id, data_ora_inizio, data_ora_fine, config_scelta) VALUES (%s, %s, %s, %s)', (irrigante_id, inizio, fine, config))
     conn.commit()
     conn.close()
+    st.cache_data.clear() # Svuota la cache ad ogni modifica
 
 def cancella_prenotazione(id_prenotazione):
     conn = get_db_connection()
@@ -240,6 +274,7 @@ def cancella_prenotazione(id_prenotazione):
     cursor.execute("DELETE FROM prenotazioni WHERE id = %s", (id_prenotazione,))
     conn.commit()
     conn.close()
+    st.cache_data.clear() # Svuota la cache ad ogni modifica
 
 def cancella_turni_settimana(data_rif):
     inizio_sett = data_rif - timedelta(days=data_rif.weekday())
@@ -253,6 +288,7 @@ def cancella_turni_settimana(data_rif):
     ''', (str(inizio_sett), str(fine_sett)))
     conn.commit()
     conn.close()
+    st.cache_data.clear() # Svuota la cache ad ogni modifica
 
 def cancella_turni_mese(data_rif):
     anno_mese = data_rif.strftime("%Y-%m")
@@ -261,6 +297,7 @@ def cancella_turni_mese(data_rif):
     cursor.execute("DELETE FROM prenotazioni WHERE substring(data_ora_inizio from 1 for 7) = %s", (anno_mese,))
     conn.commit()
     conn.close()
+    st.cache_data.clear() # Svuota la cache ad ogni modifica
 
 def cancella_turni_generale():
     conn = get_db_connection()
@@ -268,6 +305,7 @@ def cancella_turni_generale():
     cursor.execute("DELETE FROM prenotazioni")
     conn.commit()
     conn.close()
+    st.cache_data.clear() # Svuota la cache ad ogni modifica
 
 def cancella_turni_specifico_irrigante(id_irr):
     conn = get_db_connection()
@@ -275,6 +313,7 @@ def cancella_turni_specifico_irrigante(id_irr):
     cursor.execute("DELETE FROM prenotazioni WHERE irrigante_id = %s", (id_irr,))
     conn.commit()
     conn.close()
+    st.cache_data.clear() # Svuota la cache ad ogni modifica
 
 def selezionao_pompe_centrale(motori):
     if motori == 0: return "IMPIANTO FERMO", []
@@ -335,16 +374,9 @@ try:
 except Exception:
     pass
 
-engine = get_sqlalchemy_engine()
-df_irriganti = pd.read_sql_query(text("SELECT * FROM irriganti ORDER BY nome"), engine)
-df_tutti_attivi = pd.read_sql_query(text('''
-    SELECT p.id, i.id AS irr_id, i.nome, i.motori_std, i.zona, i.minuti_distanza, i.extra_fosso_sporco, i.giorni_anticipo_manovra,
-           p.data_ora_inizio, p.data_ora_fine, p.config_scelta
-    FROM prenotazioni p 
-    LEFT JOIN irriganti i ON p.irrigante_id = i.id
-    WHERE p.stato = 'PROGRAMMATO' AND i.id IS NOT NULL
-    ORDER BY p.data_ora_inizio ASC
-'''), engine)
+# Richiamo delle funzioni caricate in cache
+df_irriganti = get_cached_irriganti()
+df_tutti_attivi = get_cached_tutti_attivi()
 
 if not df_tutti_attivi.empty:
     df_tutti_attivi = df_tutti_attivi[df_tutti_attivi['data_ora_inizio'].str.len() >= 16].copy()
@@ -585,7 +617,6 @@ with tab_dashboard:
             for d_ini, d_fin in lista_coppie_date:
                 inizio_completo = f"{d_ini.strftime('%Y-%m-%d')} {ora_inizio_str}"
                 
-                # --- APPLICATA CORREZIONE: Gestione dei turni notturni che scavalcano la mezzanotte ---
                 if ora_fine_str != "24:00" and ora_fine_str <= ora_inizio_str:
                     d_fin_effettivo = d_ini + timedelta(days=1)
                 else:
@@ -711,7 +742,7 @@ with tab_agenda:
         st.info("Nessuna manovra presente nel sistema.")
     else:
         manovre_totali = []
-        df_manovre_p = pd.read_sql_query(text("SELECT * FROM manovre_personalizzate"), engine)
+        df_manovre_p = get_cached_manovre_personalizzate() # Utilizzo della cache
 
         for idx, row in df_tutti_attivi.iterrows():
             in_dt = row['data_inizio_dt']
@@ -1007,7 +1038,7 @@ with tab_anagrafica:
                         st.success("Manovra aggiunto!")
                         st.rerun()
 
-            df_m_salvate = pd.read_sql_query(text("SELECT * FROM manovre_personalizzate WHERE irrigante_id = :id"), engine, params={"id": int(id_selezionato)})
+            df_m_salvate = get_cached_manovre_specifiche(id_selezionato) # Utilizzo della cache
             if not df_m_salvate.empty:
                 st.caption("Manovre registrate attive per questo profilo:")
                 for _, m_salv in df_m_salvate.iterrows():
