@@ -245,10 +245,10 @@ def calcola_orari_pompe_settimanali_cached(df_tutti_attivi_serialized, inizio_se
             
             motori_minuto_arr[minuto_del_giorno] = motori_min
             if motori_min > 0:
-                totale_con_perdite = calcola_motori_con_perdite(motori_min)
-                if totale_con_perdite <= 6.0:
+                totale_con_perdites = calcola_motori_con_perdite(motori_min)
+                if totale_con_perdites <= 6.0:
                     p4_nominale[minuto_del_giorno] = True
-                elif totale_con_perdite <= 8.0:
+                elif totale_con_perdites <= 8.0:
                     p3_nominale[minuto_del_giorno] = True
                 else:
                     p4_nominale[minuto_del_giorno] = True
@@ -604,7 +604,6 @@ with tab_home:
 with tab_dashboard:
     st.title("💧 IdroSmart PRO — Controllo Distribuzione Idrica")
     
-    # Frammento dedicato alla gestione dei Form laterali per evitare il refresh totale dell'app
     @st.fragment
     def render_sidebar_e_controlli():
         st.sidebar.header("➕ Inserisci Nuovo Turno")
@@ -686,7 +685,6 @@ with tab_dashboard:
                 for d_ini, d_fin in lista_coppie_date:
                     inizio_completo = f"{d_ini.strftime('%Y-%m-%d')} {ora_inizio_str}"
                     
-                    # CORREZIONE APPLICATA: accorcia al giorno dopo solo se l'utente ha inserito lo stesso giorno d'inizio e fine
                     if d_ini == d_fin and ora_fine_str != "24:00" and ora_fine_str <= ora_inizio_str:
                         d_fin_effettivo = d_ini + timedelta(days=1)
                     else:
@@ -696,7 +694,6 @@ with tab_dashboard:
                     inserisci_prenotazione_avanzata(id_irrigante_db, inizio_completo, fine_completo, config_salv)
                     
                 st.sidebar.success("Turni registrati correttamente!")
-                st.invalidate_pages()
                 st.rerun()
 
         st.sidebar.markdown("---")
@@ -894,7 +891,6 @@ with tab_sala_macchine:
             st.session_state.data_settimana_macchine += timedelta(days=7)
             st.rerun()
 
-    # --- CHIAMATA CACHED ESTREMAMENTE VELOCE ---
     if not df_tutti_attivi.empty:
         df_serializzabile = df_tutti_attivi.drop(columns=['data_inizio_dt', 'data_fine_dt'], errors='ignore')
     else:
