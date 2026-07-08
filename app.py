@@ -191,7 +191,7 @@ def calcola_fasce_sovrapposte_giorno(df_giorno, data_rif):
         
     return fasce
 
-# --- CACHING STRUTTURALE PESANTE PER LA SALA MACCHINE (Riducono 10.000+ calcoli a 0ms) ---
+# --- CACHING STRUTTURALE PESANTE PER LA SALA MACCHINE ---
 def unisci_fasce_orarie(array_presenza):
     fasce = []
     in_blocco = False
@@ -322,7 +322,7 @@ def inizializza_tabelle_personalizzate():
             )
         '''))
 
-# --- FUNZIONI DI SCRITTURA VELOCIZZATE (Sfruttano SQLAlchemy Connection Pool) ---
+# --- FUNZIONI DI SCRITTURA VELOCIZZATE ---
 def inserisci_irrigante_completo(nome, zona, prelievo, motori, distanza, extra_fosso, giorni_ant):
     engine = get_sqlalchemy_engine()
     with engine.begin() as conn:
@@ -685,7 +685,9 @@ with tab_dashboard:
                     
                 for d_ini, d_fin in lista_coppie_date:
                     inizio_completo = f"{d_ini.strftime('%Y-%m-%d')} {ora_inizio_str}"
-                    if ora_fine_str != "24:00" and ora_fine_str <= ora_inizio_str:
+                    
+                    # CORREZIONE APPLICATA: accorcia al giorno dopo solo se l'utente ha inserito lo stesso giorno d'inizio e fine
+                    if d_ini == d_fin and ora_fine_str != "24:00" and ora_fine_str <= ora_inizio_str:
                         d_fin_effettivo = d_ini + timedelta(days=1)
                     else:
                         d_fin_effettivo = d_fin
@@ -892,8 +894,7 @@ with tab_sala_macchine:
             st.session_state.data_settimana_macchine += timedelta(days=7)
             st.rerun()
 
-    # --- CHIAMATA CACHED ESTREMAMENTE VELOCE (0.001 secondi) ---
-    # Serializziamo il dataframe escludendo le colonne datetime complesse prima di passarlo alla cache streamlit
+    # --- CHIAMATA CACHED ESTREMAMENTE VELOCE ---
     if not df_tutti_attivi.empty:
         df_serializzabile = df_tutti_attivi.drop(columns=['data_inizio_dt', 'data_fine_dt'], errors='ignore')
     else:
